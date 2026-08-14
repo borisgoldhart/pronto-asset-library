@@ -269,8 +269,11 @@ export async function attachUser(req, _res, next) {
       auth: {
         token: s.token,
         cookie: s.cookie,
-        onCookieRefresh: (c) => { updateSession(s.sid, { cookie: c }).catch(() => {}); },
-        onTokenRefresh: (t, c) => { updateSession(s.sid, { token: t, ...(c ? { cookie: c } : {}) }).catch(() => {}); },
+        // Return the promise so callers can AWAIT persistence. On serverless the
+        // lambda freezes right after the response — a fire-and-forget Redis write
+        // is silently lost, which kept every request on the slow bearer path.
+        onCookieRefresh: (c) => updateSession(s.sid, { cookie: c }),
+        onTokenRefresh: (t, c) => updateSession(s.sid, { token: t, ...(c ? { cookie: c } : {}) }),
       },
       identity: s.identity,
       key: userKeyOf(s.identity) || "anon",

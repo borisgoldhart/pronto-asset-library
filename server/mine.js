@@ -125,6 +125,14 @@ async function attemptFetch(url, { method = "GET", authHeaders = {}, timeoutMs =
   }
 }
 
+/** Persist a freshly minted session cookie onto the auth object AND await the
+ *  session-store write — on serverless a fire-and-forget write is lost when the
+ *  lambda freezes, which would keep every request on the slow bearer path. */
+async function saveCookie(auth, cookie) {
+  auth.cookie = cookie;
+  try { await Promise.resolve(auth.onCookieRefresh?.(cookie)); } catch {}
+}
+
 /**
  * Fetch a Mine API URL with per-user session auth (multi-user mode) or the
  * .env credential fallback. Cookie first (fast), bearer fallback, cookie
@@ -149,10 +157,7 @@ export async function fetchMine(url, { method = "GET", timeoutMs = 45000, auth =
         // cookie path. Persisted via onCookieRefresh (Redis) for later invocations.
         if (result.ok && s.label === "user-bearer" && auth.token) {
           const v = await prontoVerifyToken(auth.token);
-          if (v.ok && v.cookie) {
-            auth.cookie = v.cookie;
-            if (typeof auth.onCookieRefresh === "function") { try { auth.onCookieRefresh(v.cookie); } catch {} }
-          }
+          if (v.ok && v.cookie) await saveCookie(auth, v.cookie);
         }
         return result;
       }
@@ -161,8 +166,7 @@ export async function fetchMine(url, { method = "GET", timeoutMs = 45000, auth =
       // Re-bootstrap a fresh session cookie from the (still valid?) token.
       const v = await prontoVerifyToken(auth.token);
       if (v.ok && v.cookie) {
-        auth.cookie = v.cookie;
-        if (typeof auth.onCookieRefresh === "function") { try { auth.onCookieRefresh(v.cookie); } catch {} }
+        await saveCookie(auth, v.cookie);
         result = await attemptFetch(url, { method, authHeaders: { Cookie: v.cookie }, timeoutMs });
         result.authUsed = "user-cookie";
         if (result.status !== 401) return result;
@@ -174,10 +178,7 @@ export async function fetchMine(url, { method = "GET", timeoutMs = 45000, auth =
         if (rf.cookie) auth.cookie = rf.cookie;
         if (typeof auth.onTokenRefresh === "function") { try { auth.onTokenRefresh(rf.token, rf.cookie || null); } catch {} }
         const v2 = await prontoVerifyToken(rf.token);
-        if (v2.ok && v2.cookie) {
-          auth.cookie = v2.cookie;
-          if (typeof auth.onCookieRefresh === "function") { try { auth.onCookieRefresh(v2.cookie); } catch {} }
-        }
+        if (v2.ok && v2.cookie) await saveCookie(auth, v2.cookie);
         if (auth.cookie) {
           result = await attemptFetch(url, { method, authHeaders: { Cookie: auth.cookie }, timeoutMs });
           result.authUsed = "user-cookie-refreshed";
@@ -374,8 +375,7 @@ async function resolveBinary(url, { auth, follow = false } = {}) {
   if (auth?.token) {
     const v = await prontoVerifyToken(auth.token);
     if (v.ok && v.cookie) {
-      auth.cookie = v.cookie;
-      if (typeof auth.onCookieRefresh === "function") { try { auth.onCookieRefresh(v.cookie); } catch {} }
+      await saveCookie(auth, v.cookie);
       return fetchBinary(url, { Cookie: v.cookie }, { follow });
     }
   }
@@ -383,14 +383,16 @@ async function resolveBinary(url, { auth, follow = false } = {}) {
 }
 
 /**
- * Preview image for an asset. Follows Pronto's redirect to the presigned
- * CloudFront/S3 URL server-side and returns the BYTES, so the browser can cache
- * against our stable /api/mine/thumb/<assetid> URL (the presigned URLs rotate
- * per request and would defeat browser caching).
+ * Preview image for an asset. Resolves Pronto's redirect and 302s the BROWSER
+ * to the presigned CloudFront/S3 URL — the bytes never pass through the
+ * function, images download in parallel from the CDN, and the redirect response
+ * itself carries Cache-Control so the stable /api/mine/thumb/<id> URL is cached
+ * browser-side for repeat views. Falls back to proxying bytes when Pronto
+ * serves the image directly.
  */
 export function resolveThumb(assetid, { auth } = {}) {
   const url = `${config.prontoBaseUrl}/openpreview.php?format=preview&assetid=${encodeURIComponent(assetid)}`;
-  return resolveBinary(url, { auth, follow: true });
+  return resolveBinary(url, { auth, follow: false });
 }
 
 /** Download: keep the redirect (files can be huge — don't proxy the bytes). */

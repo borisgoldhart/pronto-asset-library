@@ -8,7 +8,7 @@ const $ = (id) => document.getElementById(id);
 
 /* ---------------- state ---------------- */
 const state = {
-  q: "", exact: false, status: "all", archived: false,
+  q: "", exact: false, status: "all", archived: false, showFinance: false,
   brand: null,            // {id,label} -> brandcategory
   audience: "",           // id -> asset_purpose
   projecttype: null,      // {id,label} -> projecttypeid
@@ -41,6 +41,7 @@ function buildQuery() {
   if (state.exact && state.q) p.set("exact_match", "1");
   p.set("status", state.status || "all");
   if (state.archived) p.set("archived", "y");
+  if (!state.showFinance) p.set("hidefinance", "1");
   if (state.brand) p.set("brand_id", state.brand.id);   // brand from get-brands; verified live (brandcategory is the CLIENT/category id)
   if (state.audience) p.set("asset_purpose", state.audience);
   if (state.projecttype) p.set("projecttypeid", state.projecttype.id);
@@ -59,19 +60,24 @@ function buildQuery() {
   return p;
 }
 
+let INFLIGHT_QS = null;
 async function runSearch() {
+  const qs = buildQuery().toString();
+  if (qs === INFLIGHT_QS) return;       // identical request already in flight
+  INFLIGHT_QS = qs;
   const seq = ++FETCH_SEQ;
   $("loading").hidden = false;
   $("emptyState").hidden = true;
   try {
-    const r = await api(`/api/mine/search?${buildQuery().toString()}`);
+    const r = await api(`/api/mine/search?${qs}`);
     if (seq !== FETCH_SEQ) return;      // superseded by a newer search
     COUNT = r.count || 0;
     renderGrid(r.assets || []);
     renderPagination();
     renderActiveChips();
-    $("resultCount").textContent = COUNT ? `${COUNT.toLocaleString()} assets` : "";
-    $("emptyState").hidden = COUNT > 0;
+    const hid = r.hiddenFinance ? ` · ${r.hiddenFinance} finance docs hidden` : "";
+    $("resultCount").textContent = COUNT ? `${COUNT.toLocaleString()} assets${hid}` : "";
+    $("emptyState").hidden = (r.assets || []).length > 0;
   } catch (e) {
     if (seq !== FETCH_SEQ) return;
     if (String(e.message) !== "auth") {
@@ -80,7 +86,7 @@ async function runSearch() {
       $("emptyState").textContent = `Search failed: ${e.message}`;
     }
   } finally {
-    $("loading").hidden = true;
+    if (seq === FETCH_SEQ) { $("loading").hidden = true; INFLIGHT_QS = null; }
   }
 }
 function newSearch() { state.page = 1; runSearch(); }
@@ -117,7 +123,7 @@ function renderGrid(assets) {
     return `<div class=\"card\" data-id=\"${esc(a.assetid)}\">
       <div class=\"card-thumb\">
         <div class=\"ext\">${esc(extOf(a.title))}</div>
-        <img loading=\"lazy\" src=\"/api/mine/thumb/${esc(a.assetid)}\" alt=\"\"
+        <img decoding=\"async\" fetchpriority=\"low\" loading=\"lazy\" src=\"/api/mine/thumb/${esc(a.assetid)}\" alt=\"\"
              onerror=\"this.remove()\" />
         ${status ? `<span class=\"card-status ${sClass}\">${esc(status)}</span>` : ""}
         <div class=\"card-actions\">
@@ -300,6 +306,7 @@ function wireControls() {
   $("f_exact").addEventListener("change", (e) => { state.exact = e.target.checked; if (state.q) newSearch(); });
   $("f_status").addEventListener("change", (e) => { state.status = e.target.value; newSearch(); });
   $("f_archived").addEventListener("change", (e) => { state.archived = e.target.checked; newSearch(); });
+  $("f_finance").addEventListener("change", (e) => { state.showFinance = e.target.checked; newSearch(); });
   $("f_audience").addEventListener("change", (e) => { state.audience = e.target.value; newSearch(); });
   $("f_doctype").addEventListener("change", (e) => { state.doctype = e.target.value; newSearch(); });
   $("f_collection").addEventListener("change", (e) => { state.collection = e.target.value; newSearch(); });
@@ -320,7 +327,7 @@ function wireControls() {
 
   $("clearBtn").addEventListener("click", () => {
     Object.assign(state, {
-      q: "", exact: false, status: "all", archived: false, brand: null, audience: "",
+      q: "", exact: false, status: "all", archived: false, showFinance: false, brand: null, audience: "",
       projecttype: null, assettype: null, doctype: "", offices: [], tags: [],
       collection: "", rating: "", dateFrom: "", dateTo: "", author: "", page: 1,
     });
@@ -328,7 +335,7 @@ function wireControls() {
     ["f_status"].forEach((id) => { $(id).value = "all"; });
     ["f_audience", "f_doctype", "f_collection", "f_rating"].forEach((id) => { $(id).value = ""; });
     ["f_dateFrom", "f_dateTo"].forEach((id) => { $(id).value = ""; });
-    $("f_exact").checked = false; $("f_archived").checked = false;
+    $("f_exact").checked = false; $("f_archived").checked = false; $("f_finance").checked = false;
     setBrand(null); setProjecttype(null); setAssettype(null);
     renderOfficeChips(); renderTagChips();
     runSearch();

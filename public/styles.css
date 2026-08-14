@@ -134,15 +134,18 @@ body {
 .card-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
 
 .empty { padding: 60px 20px; text-align: center; color: var(--muted); font-size: 14px; }
-/* Search-in-flight: overlay ON TOP of the existing grid (SOLR can be slow), so
-   the spinner is visible without scrolling and the stale results read as stale. */
+/* Search-in-flight: NON-BLOCKING. The previous results stay fully visible and
+   clickable; a floating pill + slight fade signal that fresh data is coming.
+   New results (and their thumbs, which stream in lazily) swap in on arrival. */
 .results { position: relative; }
+.results:has(.loading:not([hidden])) .asset-grid { opacity: .75; transition: opacity .15s; }
 .loading {
-  position: absolute; inset: 0; z-index: 40;
-  display: flex; align-items: flex-start; justify-content: center; gap: 10px;
-  padding-top: 110px; color: var(--ink); font-weight: 600;
-  background: color-mix(in srgb, var(--bg) 62%, transparent);
-  backdrop-filter: blur(1px); border-radius: 4px;
+  position: sticky; top: calc(var(--pp-nav-h, 56px) + 10px); z-index: 60;
+  width: max-content; margin: 0 auto 10px;
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 16px; color: var(--ink); font-weight: 600; font-size: 12.5px;
+  background: #fff; border: 1px solid var(--line); border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(16,24,40,.14);
 }
 .spinner {
   width: 18px; height: 18px; border: 2.5px solid var(--line); border-top-color: var(--pronto-blue);
