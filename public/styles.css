@@ -134,7 +134,16 @@ body {
 .card-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
 
 .empty { padding: 60px 20px; text-align: center; color: var(--muted); font-size: 14px; }
-.loading { padding: 46px 20px; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--muted); }
+/* Search-in-flight: overlay ON TOP of the existing grid (SOLR can be slow), so
+   the spinner is visible without scrolling and the stale results read as stale. */
+.results { position: relative; }
+.loading {
+  position: absolute; inset: 0; z-index: 40;
+  display: flex; align-items: flex-start; justify-content: center; gap: 10px;
+  padding-top: 110px; color: var(--ink); font-weight: 600;
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  backdrop-filter: blur(1px); border-radius: 4px;
+}
 .spinner {
   width: 18px; height: 18px; border: 2.5px solid var(--line); border-top-color: var(--pronto-blue);
   border-radius: 50%; animation: spin .8s linear infinite;

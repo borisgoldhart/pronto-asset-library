@@ -234,17 +234,53 @@ export async function searchAssets(query, { auth } = {}) {
   };
 }
 
+/** The Audience filter (-> asset_purpose param) is dam-level config rendered
+ *  server-side by the legacy page; dam.php get-audiences returns a DIFFERENT
+ *  taxonomy. These id/label pairs were captured from the live Mine UI. */
+const AUDIENCES = [
+  [25, "Consumer"], [32, "Crisis Management"], [35, "Digital"],
+  [6, "Do not use without permission"], [30, "Event"], [31, "Internal"],
+  [29, "Media"], [34, "Offline"], [2, "Online"], [9, "Other"], [4, "Outdoor"],
+  [26, "Owned Asset"], [23, "Patient"], [21, "Pitch"], [1, "Print"],
+  [28, "Professional"], [24, "Professional Med Ed"], [27, "Professional Unbranded"],
+  [33, "Public Relations"], [5, "Region specific, contact uploader for use"],
+  [22, "Strategy"], [3, "TV"],
+].map(([id, label]) => ({ id, label }));
+
 /** SAYT lookups via dam.php (get-brands / get-project-types / get-offices /
- *  get-audiences / get-asset-types). All return {menu:[{alias,id}...]} or arrays. */
+ *  get-asset-types). Response shapes vary by action — normalise generically. */
 const LOOKUP_ACTIONS = {
   brands: "get-brands",
   "project-types": "get-project-types",
   offices: "get-offices",
-  audiences: "get-audiences",
   "asset-types": "get-asset-types",
 };
 
+function labelOf(x) {
+  return x.alias ?? x.name ?? x.text ?? x.title ?? x.label ?? null;
+}
+/** Find the first array of {id,label-ish} objects anywhere in the response. */
+function extractItems(d) {
+  const tryArr = (arr) => arr
+    .filter((x) => x && typeof x === "object" && x.id !== "" && x.id != null && labelOf(x) != null)
+    .map((x) => ({ id: x.id, label: String(labelOf(x)) }));
+  if (Array.isArray(d)) return tryArr(d);
+  if (d && typeof d === "object") {
+    for (const v of Object.values(d)) {
+      if (Array.isArray(v)) { const items = tryArr(v); if (items.length) return items; }
+    }
+    // object-of-objects keyed "0","1",... (e.g. get-collections)
+    const vals = Object.values(d).filter((v) => v && typeof v === "object");
+    if (vals.length) { const items = tryArr(vals); if (items.length) return items; }
+  }
+  return [];
+}
+
 export async function lookup(kind, { keyword = "", limit = 25, page = 1, auth } = {}) {
+  if (kind === "audiences") {
+    const kw = String(keyword || "").toLowerCase();
+    return { ok: true, status: 200, items: AUDIENCES.filter((a) => !kw || a.label.toLowerCase().includes(kw)) };
+  }
   const action = LOOKUP_ACTIONS[kind];
   if (!action) return { ok: false, status: 400, error: `Unknown lookup: ${kind}` };
   const params = new URLSearchParams({
@@ -255,12 +291,7 @@ export async function lookup(kind, { keyword = "", limit = 25, page = 1, auth } 
   const url = `${config.prontoBaseUrl}${DAM_PHP}?${params.toString()}`;
   const r = await fetchMine(url, { auth });
   if (!r.ok) return r;
-  // Normalise: {menu:[{alias,id}]} or plain [{id,name}]
-  const d = r.data;
-  let items = [];
-  if (Array.isArray(d)) items = d.map((x) => ({ id: x.id, label: x.name || x.alias || String(x.id) }));
-  else if (Array.isArray(d?.menu)) items = d.menu.filter((x) => x.id !== "" && x.id != null).map((x) => ({ id: x.id, label: x.alias }));
-  return { ok: true, status: r.status, items };
+  return { ok: true, status: r.status, items: extractItems(r.data) };
 }
 
 export async function listCollections({ search = "", limit = 20, page = 0, auth } = {}) {
@@ -273,13 +304,15 @@ export async function listCollections({ search = "", limit = 20, page = 0, auth 
   const r = await fetchMine(url, { auth });
   if (!r.ok) return r;
   const d = r.data;
-  const rawList = Array.isArray(d) ? d : (d?.collections || d?.data || d?.results || []);
+  let rawList = Array.isArray(d) ? d : (d?.collections || d?.data || d?.results || null);
+  // get-collections returns an object keyed "0","1",... — not an array
+  if (!rawList && d && typeof d === "object") rawList = Object.values(d).filter((v) => v && typeof v === "object");
   const items = (Array.isArray(rawList) ? rawList : []).map((c) => ({
     id: c.id ?? c.collection_id ?? c.collectionid,
     label: c.name ?? c.title ?? c.alias ?? `Collection ${c.id}`,
     count: c.asset_count ?? c.count ?? null,
-  })).filter((c) => c.id != null);
-  return { ok: true, status: r.status, items, raw: items.length ? undefined : d };
+  })).filter((c) => c.id != null && c.label != null);
+  return { ok: true, status: r.status, items };
 }
 
 export async function popularTags({ limit = 20, auth } = {}) {
@@ -287,11 +320,11 @@ export async function popularTags({ limit = 20, auth } = {}) {
   const r = await fetchMine(url, { auth });
   if (!r.ok) return r;
   const d = r.data;
-  const list = Array.isArray(d) ? d : (d?.tags || d?.data || []);
+  const list = Array.isArray(d) ? d : (d?.items || d?.tags || d?.data || []);
   const items = (Array.isArray(list) ? list : []).map((t) =>
-    typeof t === "string" ? { tag: t } : { tag: t.tag ?? t.name ?? t.alias ?? String(t.id), count: t.count ?? null }
+    typeof t === "string" ? { tag: t } : { tag: t.title ?? t.tag ?? t.name ?? t.alias ?? String(t.id), count: t.count ?? null }
   ).filter((t) => t.tag);
-  return { ok: true, status: r.status, items, raw: items.length ? undefined : d };
+  return { ok: true, status: r.status, items };
 }
 
 /* ---------------- binary endpoints (previews + downloads) ----------------
