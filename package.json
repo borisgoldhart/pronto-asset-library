@@ -1,0 +1,19 @@
+{
+  "name": "pronto-asset-library",
+  "version": "0.1.0",
+  "description": "Standalone Pronto Asset Library (The Mine) — modern UI over the Pronto DAM SOLR search API. Same architecture and auth as the Pronto Reporting Dashboard.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@upstash/redis": "^1.38.0",
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.2",
+    "ioredis": "^5.11.1"
+  }
+}

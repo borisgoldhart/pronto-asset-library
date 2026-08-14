@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pronto Asset Library</title>
+
+  <!-- Pronto Base: shared nav + page template (auto-mounts <pronto-nav> + <pronto-banner>). -->
+  <script>
+    window.ProntoPage = {
+      pageTitle: "Asset Library",
+      subtitle: "The Mine",
+      pageInfo: "Search, filter and download assets from the Pronto Mine.",
+      appRoot: "https://havaspronto.com",
+      homepage: false,
+      links: [],
+      search: { hidden: true },
+      plusMenu: false,
+      userMenu: { sections: [{ items: [
+        { label: "My Details", icon: "idCard", href: "https://havaspronto.com/v2/account" },
+        { id: "logout", label: "Logout", icon: "logout",
+          onClick: function () { if (window.prontoLogout) window.prontoLogout(); } }
+      ] }] }
+    };
+  </script>
+  <script src="/base/v1/loader.js"></script>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- <pronto-nav> + <pronto-banner> auto-mounted here -->
+
+  <div class="layout">
+    <!-- ================= Facet sidebar ================= -->
+    <aside class="facets" id="facets">
+      <div class="facet-search">
+        <input id="f_q" type="search" placeholder="Search assets…" autocomplete="off" />
+        <button id="searchBtn" class="btn primary" title="Search">Search</button>
+      </div>
+      <label class="chk facet-exact"><input type="checkbox" id="f_exact" /> Exact match</label>
+
+      <fieldset class="facet">
+        <legend>Status</legend>
+        <select id="f_status">
+          <option value="all">Any</option>
+          <option value="pending approval">Pending Approval</option>
+          <option value="Approved For Release">Approved for release</option>
+          <option value="approved">Approved</option>
+          <option value="Final">Final</option>
+          <option value="partial approval">Partial Approval</option>
+        </select>
+        <label class="chk"><input type="checkbox" id="f_archived" /> Include archived</label>
+      </fieldset>
+
+      <fieldset class="facet">
+        <legend>Brand</legend>
+        <div class="sayt">
+          <input id="f_brand" type="text" placeholder="Search for brand…" autocomplete="off" />
+          <div id="brandMenu" class="sayt-menu"></div>
+        </div>
+        <div id="brandChip" class="chips"></div>
+      </fieldset>
+
+      <fieldset class="facet">
+        <legend>Audience</legend>
+        <select id="f_audience"><option value="">Any audience</option></select>
+      </fieldset>
+
+      <fieldset class="facet">
+        <legend>Project type</legend>
+        <div class="sayt">
+          <input id="f_projecttype" type="text" placeholder="Search project types…" autocomplete="off" />
+          <div id="projecttypeMenu" class="sayt-menu"></div>
+        </div>
+        <div id="projecttypeChip" class="chips"></div>
+      </fieldset>
+
+      <fieldset class="facet">
+        <legend>Asset type</legend>
+        <div class="sayt">
+          <input id="f_assettype" type="text" placeholder="Search asset types…" autocomplete="off" />
+          <div id="assettypeMenu" class="sayt-menu"></div>
+        </div>
+        <div id="assettypeChip" class="chips"></div>
+      </fieldset>
+
+      <fieldset class="facet">
+        <legend>Document type</legend>
+        <select id="f_doctype">
+          <option value="">Any type</option>
+          <option value="1">Photo</option>
+          <option value="2">Video</option>
+          <option value="3">Spreadsheet</option>
+          <option value="4">Presentation</option>
+          <option value="5">Document</option>
+        </select>
+      </fieldset>
+
+      <fieldset class="facet">
+        <legend>Office</legend>
+        <div class="sayt">
+          <input id="f_office" type="text" placeholder="Search offices…" autocomplete="off" />
+          <div id="officeMenu" class="sayt-menu"></div>
+        </div>
+        <div id="officeChips" class="chips"></div>
+      </fieldset>
+
+      <fieldset class="facet">
+        <legend>Tags</legend>
+        <div class="sayt">
+          <input id="f_tag" type="text" placeholder="Add a tag…" autocomplete="off" />
+        </div>
+        <div id="tagChips" class="chips"></div>
+        <div id="popularTags" class="popular-tags"></div>
+      </fieldset>
+
+      <fieldset class="facet">
+        <legend>Collections</legend>
+        <select id="f_collection"><option value="">Any collection</option></select>
+      </fieldset>
+
+      <fieldset class="facet">
+        <legend>Rating</legend>
+        <select id="f_rating">
+          <option value="">Any rating</option>
+          <option value="1">1/5 or greater</option>
+          <option value="2">2/5 or greater</option>
+          <option value="3">3/5 or greater</option>
+          <option value="4">4/5 or greater</option>
+          <option value="5">5/5</option>
+        </select>
+      </fieldset>
+
+      <fieldset class="facet">
+        <legend>Uploaded</legend>
+        <div class="two">
+          <label>From<input id="f_dateFrom" type="date" /></label>
+          <label>To<input id="f_dateTo" type="date" /></label>
+        </div>
+      </fieldset>
+
+      <fieldset class="facet">
+        <legend>Uploaded by</legend>
+        <input id="f_author" type="text" placeholder="Name…" autocomplete="off" />
+      </fieldset>
+
+      <button id="clearBtn" class="btn btn-clear">Clear all filters</button>
+    </aside>
+
+    <!-- ================= Results ================= -->
+    <main class="results">
+      <div class="results-head">
+        <div id="activeChips" class="chips chips-active"></div>
+        <div class="results-meta">
+          <span id="resultCount" class="count"></span>
+          <select id="f_sort" title="Order results">
+            <option value="">Newest first</option>
+            <option value="asset_title asc">A–Z</option>
+            <option value="asset_title desc">Z–A</option>
+            <option value="time desc">Upload date — newest</option>
+            <option value="time asc">Upload date — oldest</option>
+            <option value="doc_type asc">File type — asc</option>
+            <option value="doc_type desc">File type — desc</option>
+            <option value="brand_id asc">Brand — asc</option>
+            <option value="brand_id desc">Brand — desc</option>
+            <option value="client_office_name asc">Office — asc</option>
+            <option value="client_office_name desc">Office — desc</option>
+          </select>
+          <select id="f_rows" title="Results per page">
+            <option value="20">20 / page</option>
+            <option value="50" selected>50 / page</option>
+            <option value="100">100 / page</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="grid" class="asset-grid"></div>
+      <div id="emptyState" class="empty" hidden>No assets match these filters.</div>
+      <div id="loading" class="loading" hidden><div class="spinner"></div>Loading assets…</div>
+
+      <nav id="pagination" class="pagination"></nav>
+    </main>
+  </div>
+
+  <!-- Login screen (identical contract to the Reporting Dashboard) -->
+  <div id="loginScreen" class="login-screen" hidden>
+    <div class="login-card">
+      <img class="login-logo" src="/base/v1/img/havas-pronto-wide.png"
+           onerror="this.onerror=null;this.src='https://havaspronto.com/v2/build/images/logos/Havas-pronto-wide.png'" alt="Havas Pronto"/>
+      <h2>Sign in to the Asset Library</h2>
+      <p class="login-sub">Use your HavasPronto.com account. Search results respect your
+        Pronto permissions.</p>
+
+      <button id="brokerBtn" class="pp-btn pp-btn--primary login-btn" type="button">Sign in with HavasPronto</button>
+      <p id="brokerStatus" class="login-note" hidden></p>
+
+      <div class="login-divider" id="brokerDivider"><span>or with email &amp; password</span></div>
+      <form id="loginForm">
+        <label class="pp-label">Email
+          <input id="l_email" class="pp-input" type="email" autocomplete="username" placeholder="you@havas.com"/></label>
+        <label class="pp-label">Password
+          <input id="l_password" class="pp-input" type="password" autocomplete="current-password"/></label>
+        <button class="pp-btn login-btn" type="submit">Sign in</button>
+        <p class="login-note">Your password is exchanged with havaspronto.com for an API token
+          and is never stored by this app.</p>
+      </form>
+
+      <div class="login-divider"><span>or use an API token</span></div>
+      <form id="tokenForm">
+        <label class="pp-label">Bearer token
+          <input id="l_token" class="pp-input" type="password" placeholder="Paste your Pronto API token"/></label>
+        <div class="login-row">
+          <a id="tokenGenLink" href="#" target="_blank" rel="noopener" hidden>Get a token &#8599;</a>
+          <button class="pp-btn login-btn" type="submit">Sign in with token</button>
+        </div>
+      </form>
+
+      <div id="loginErr" class="login-err" hidden></div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
