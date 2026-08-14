@@ -20,7 +20,7 @@ const state = {
   rating: "",             // -> rating
   dateFrom: "", dateTo: "",  // -> startDate / endDate
   author: "",
-  sort: "", rows: 50, page: 1,
+  sort: "", rows: 30, page: 1,
 };
 let COUNT = 0;
 let FETCH_SEQ = 0;
@@ -66,6 +66,11 @@ async function runSearch() {
   if (qs === INFLIGHT_QS) return;       // identical request already in flight
   INFLIGHT_QS = qs;
   const seq = ++FETCH_SEQ;
+  // OPTIMISTIC UI: reflect the new filter state instantly — chips update and the
+  // stale grid clears BEFORE the request goes out; the loader is the feedback.
+  renderActiveChips();
+  $("grid").innerHTML = "";
+  $("resultCount").textContent = "";
   $("loading").hidden = false;
   $("emptyState").hidden = true;
   try {
@@ -74,7 +79,6 @@ async function runSearch() {
     COUNT = r.count || 0;
     renderGrid(r.assets || []);
     renderPagination();
-    renderActiveChips();
     const hid = r.hiddenFinance ? ` · ${r.hiddenFinance} finance docs hidden` : "";
     $("resultCount").textContent = COUNT ? `${COUNT.toLocaleString()} assets${hid}` : "";
     $("emptyState").hidden = (r.assets || []).length > 0;
@@ -315,7 +319,7 @@ function wireControls() {
   $("f_dateTo").addEventListener("change", (e) => { state.dateTo = e.target.value; newSearch(); });
   $("f_author").addEventListener("change", (e) => { state.author = e.target.value.trim(); newSearch(); });
   $("f_sort").addEventListener("change", (e) => { state.sort = e.target.value; newSearch(); });
-  $("f_rows").addEventListener("change", (e) => { state.rows = parseInt(e.target.value, 10) || 50; newSearch(); });
+  $("f_rows").addEventListener("change", (e) => { state.rows = parseInt(e.target.value, 10) || 30; newSearch(); });
 
   $("f_tag").addEventListener("keydown", (e) => {
     if (e.key === "Enter") {

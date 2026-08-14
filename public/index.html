@@ -168,15 +168,16 @@
           </select>
           <select id="f_rows" title="Results per page">
             <option value="20">20 / page</option>
-            <option value="50" selected>50 / page</option>
+            <option value="30" selected>30 / page</option>
+            <option value="50">50 / page</option>
             <option value="100">100 / page</option>
           </select>
         </div>
       </div>
 
+      <div id="loading" class="loading" hidden><div class="spinner"></div>Loading assets…</div>
       <div id="grid" class="asset-grid"></div>
       <div id="emptyState" class="empty" hidden>No assets match these filters.</div>
-      <div id="loading" class="loading" hidden><div class="spinner"></div>Loading assets…</div>
 
       <nav id="pagination" class="pagination"></nav>
     </main>

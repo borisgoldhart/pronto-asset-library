@@ -63,7 +63,7 @@ export function buildSearchParams(query = {}) {
   params.set("damId", String(DAM_ID));
 
   let rows = parseInt(query.rows, 10);
-  if (!Number.isFinite(rows) || rows < 1) rows = 50;
+  if (!Number.isFinite(rows) || rows < 1) rows = 30;
   params.set("rows", String(Math.min(rows, MAX_ROWS)));
 
   let pos = parseInt(query.pos, 10);
