@@ -144,9 +144,32 @@ export async function fetchMine(url, { method = "GET", timeoutMs = 45000, auth =
   }
 
   if (auth) {
+    // HEDGED AUTH: the /me-minted cookie is not always honoured by /v2/search/dam,
+    // and the bearer path is slow (server-side token->session exchange). Racing
+    // both in parallel costs one duplicate request but always yields the fastest
+    // accepted path — cookie speed when it works, bearer speed when it doesn't.
+    if (auth.cookie && auth.token) {
+      const tag = (p, label) => p.then((r) => { r.authUsed = label; return r; });
+      const both = [
+        tag(attemptFetch(url, { method, authHeaders: { Cookie: auth.cookie }, timeoutMs }), "user-cookie"),
+        tag(attemptFetch(url, { method, authHeaders: { Authorization: `Bearer ${auth.token}` }, timeoutMs }), "user-bearer"),
+      ];
+      const winner = await new Promise((resolve) => {
+        let settled = 0;
+        const results = [];
+        both.forEach((p, i) => p.then((r) => {
+          results[i] = r;
+          if (r.ok) return resolve(r);                    // first accepted answer wins
+          if (++settled === both.length) resolve(results[0].status !== 401 ? results[0] : results[1]);
+        }));
+      });
+      if (winner.status !== 401) return winner;
+      // both 401 -> fall through to the re-bootstrap chain below
+    }
     const strategies = [];
     if (auth.cookie) strategies.push({ label: "user-cookie", headers: { Cookie: auth.cookie } });
     if (auth.token) strategies.push({ label: "user-bearer", headers: { Authorization: `Bearer ${auth.token}` } });
+    if (auth.cookie && auth.token) strategies.length = 0;   // already raced above
     let result = { ok: false, status: 401, error: "Session has no usable credentials" };
     for (const s of strategies) {
       result = await attemptFetch(url, { method, authHeaders: s.headers, timeoutMs });
