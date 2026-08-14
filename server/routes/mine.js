@@ -49,15 +49,19 @@ router.get("/tags/popular", async (req, res) => {
   res.json({ ok: true, items: r.items, raw: r.raw });
 });
 
-/** Thumbnail: 302 to the presigned S3 URL when Pronto redirects, else stream. */
+/** Thumbnail: proxied preview bytes with long-lived browser caching. Previews
+ *  for a given assetid are immutable (a new version = a new assetid), so let
+ *  the browser cache them for a week and never revalidate. */
 router.get("/thumb/:assetid", async (req, res) => {
   const p = requireAuthish(req, res);
   if (!p) return;
   const r = await resolveThumb(req.params.assetid, { auth: p.auth });
-  if (!r.ok) return res.status(r.status || 404).end();
-  if (r.redirect) return res.redirect(302, r.redirect);
+  if (!r.ok) {
+    res.setHeader("Cache-Control", "private, max-age=300");   // don't hammer missing previews
+    return res.status(r.status || 404).end();
+  }
   res.setHeader("Content-Type", r.contentType);
-  res.setHeader("Cache-Control", "private, max-age=3600");
+  res.setHeader("Cache-Control", "private, max-age=604800, immutable");
   res.end(r.body);
 });
 

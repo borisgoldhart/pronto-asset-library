@@ -143,7 +143,19 @@ export async function fetchMine(url, { method = "GET", timeoutMs = 45000, auth =
     for (const s of strategies) {
       result = await attemptFetch(url, { method, authHeaders: s.headers, timeoutMs });
       result.authUsed = s.label;
-      if (result.status !== 401) return result;
+      if (result.status !== 401) {
+        // Bearer rescued a stale/absent cookie: mint a fresh session cookie NOW so
+        // the binary endpoints (thumbs/downloads) and the next search get the fast
+        // cookie path. Persisted via onCookieRefresh (Redis) for later invocations.
+        if (result.ok && s.label === "user-bearer" && auth.token) {
+          const v = await prontoVerifyToken(auth.token);
+          if (v.ok && v.cookie) {
+            auth.cookie = v.cookie;
+            if (typeof auth.onCookieRefresh === "function") { try { auth.onCookieRefresh(v.cookie); } catch {} }
+          }
+        }
+        return result;
+      }
     }
     if (auth.token) {
       // Re-bootstrap a fresh session cookie from the (still valid?) token.
@@ -282,35 +294,29 @@ export async function popularTags({ limit = 20, auth } = {}) {
   return { ok: true, status: r.status, items, raw: items.length ? undefined : d };
 }
 
-/**
- * Resolve an asset's preview image. {base}/openpreview.php?format=preview&assetid=N
- * (session-cookie auth) responds either with a redirect to a public presigned S3
- * URL, or with the image bytes directly. We try to capture the redirect target so
- * the route can 302 the browser straight to S3 (no proxy bandwidth).
- */
-export async function resolveThumb(assetid, { auth } = {}) {
-  const url = `${config.prontoBaseUrl}/openpreview.php?format=preview&assetid=${encodeURIComponent(assetid)}`;
-  const headers = {};
-  if (auth?.cookie) headers.Cookie = auth.cookie;
-  else if (auth?.token) headers.Authorization = `Bearer ${auth.token}`;
-  else {
-    const cookie = await getSessionCookie({});
-    if (cookie) headers.Cookie = cookie;
-  }
+/* ---------------- binary endpoints (previews + downloads) ----------------
+ * Both are legacy session-cookie PHP routes. Auth chain per request:
+ * stored cookie → bearer → fresh cookie minted via /v2/api/auth/me (persisted
+ * back to the session), so a stale login cookie self-heals. */
+
+async function fetchBinary(url, headers, { follow = false } = {}) {
   try {
-    const res = await fetch(url, { method: "GET", headers, redirect: "manual" });
-    if (res.status >= 300 && res.status < 400) {
+    const res = await fetch(url, { method: "GET", headers, redirect: follow ? "follow" : "manual" });
+    if (!follow && res.status >= 300 && res.status < 400) {
       const loc = res.headers.get("location");
       if (loc) return { ok: true, redirect: loc };
     }
     if (res.ok) {
       const ct = res.headers.get("content-type") || "";
-      if (ct.startsWith("image/")) {
+      if (ct && !/text\/html/i.test(ct)) {
         const buf = Buffer.from(await res.arrayBuffer());
-        return { ok: true, body: buf, contentType: ct };
+        return {
+          ok: true, body: buf,
+          contentType: ct || "application/octet-stream",
+          contentDisposition: res.headers.get("content-disposition"),
+        };
       }
-      // HTML login page etc.
-      return { ok: false, status: 401, error: "Preview not accessible (auth?)" };
+      return { ok: false, status: 401, error: "HTML returned (not signed in for this endpoint)" };
     }
     return { ok: false, status: res.status, error: `HTTP ${res.status}` };
   } catch (err) {
@@ -318,29 +324,44 @@ export async function resolveThumb(assetid, { auth } = {}) {
   }
 }
 
-/** Same trick for downloads: {base}/open.php?action=download&assetid=N */
-export async function resolveDownload(assetid, { auth } = {}) {
-  const url = `${config.prontoBaseUrl}/open.php?action=download&assetid=${encodeURIComponent(assetid)}`;
-  const headers = {};
-  if (auth?.cookie) headers.Cookie = auth.cookie;
-  else if (auth?.token) headers.Authorization = `Bearer ${auth.token}`;
-  try {
-    const res = await fetch(url, { method: "GET", headers, redirect: "manual" });
-    if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get("location");
-      if (loc) return { ok: true, redirect: loc };
-    }
-    if (res.ok) {
-      const ct = res.headers.get("content-type") || "application/octet-stream";
-      if (!/text\/html/i.test(ct)) {
-        const buf = Buffer.from(await res.arrayBuffer());
-        const cd = res.headers.get("content-disposition");
-        return { ok: true, body: buf, contentType: ct, contentDisposition: cd };
-      }
-      return { ok: false, status: 401, error: "Download not accessible (auth?)" };
-    }
-    return { ok: false, status: res.status, error: `HTTP ${res.status}` };
-  } catch (err) {
-    return { ok: false, status: 0, error: String(err) };
+async function resolveBinary(url, { auth, follow = false } = {}) {
+  const tries = [];
+  if (auth?.cookie) tries.push({ Cookie: auth.cookie });
+  if (auth?.token) tries.push({ Authorization: `Bearer ${auth.token}` });
+  if (!auth) {
+    const cookie = await getSessionCookie({});
+    if (cookie) tries.push({ Cookie: cookie });
   }
+  let last = { ok: false, status: 401, error: "No usable credentials" };
+  for (const h of tries) {
+    last = await fetchBinary(url, h, { follow });
+    if (last.ok) return last;
+  }
+  // Stale cookie + bearer both refused: mint a fresh session cookie and retry once.
+  if (auth?.token) {
+    const v = await prontoVerifyToken(auth.token);
+    if (v.ok && v.cookie) {
+      auth.cookie = v.cookie;
+      if (typeof auth.onCookieRefresh === "function") { try { auth.onCookieRefresh(v.cookie); } catch {} }
+      return fetchBinary(url, { Cookie: v.cookie }, { follow });
+    }
+  }
+  return last;
+}
+
+/**
+ * Preview image for an asset. Follows Pronto's redirect to the presigned
+ * CloudFront/S3 URL server-side and returns the BYTES, so the browser can cache
+ * against our stable /api/mine/thumb/<assetid> URL (the presigned URLs rotate
+ * per request and would defeat browser caching).
+ */
+export function resolveThumb(assetid, { auth } = {}) {
+  const url = `${config.prontoBaseUrl}/openpreview.php?format=preview&assetid=${encodeURIComponent(assetid)}`;
+  return resolveBinary(url, { auth, follow: true });
+}
+
+/** Download: keep the redirect (files can be huge — don't proxy the bytes). */
+export function resolveDownload(assetid, { auth } = {}) {
+  const url = `${config.prontoBaseUrl}/open.php?action=download&assetid=${encodeURIComponent(assetid)}`;
+  return resolveBinary(url, { auth, follow: false });
 }
