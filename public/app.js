@@ -41,7 +41,7 @@ function buildQuery() {
   if (state.exact && state.q) p.set("exact_match", "1");
   p.set("status", state.status || "all");
   if (state.archived) p.set("archived", "y");
-  if (state.brand) p.set("brandcategory", state.brand.id);
+  if (state.brand) p.set("brand_id", state.brand.id);   // brand from get-brands; verified live (brandcategory is the CLIENT/category id)
   if (state.audience) p.set("asset_purpose", state.audience);
   if (state.projecttype) p.set("projecttypeid", state.projecttype.id);
   if (state.assettype) p.set("asset_type_id", state.assettype.id);

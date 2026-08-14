@@ -45,7 +45,7 @@ export const DAM_ID = Number(process.env.MINE_DAM_ID || 3);
 /** Whitelist of client-suppliable search params. Arrays allowed where noted. */
 const SCALAR_PARAMS = new Set([
   "q", "exact_match", "pos", "rows", "status", "sort",
-  "brandcategory", "asset_purpose", "projecttypeid", "doc_type", "asset_type_id",
+  "brandcategory", "brand_id", "asset_purpose", "projecttypeid", "doc_type", "asset_type_id",
   "rating", "collection_search", "author", "archived",
   "startDate", "endDate",
   "approved_for_release_date_before", "approved_for_release_date_after",
