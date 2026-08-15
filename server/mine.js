@@ -301,6 +301,42 @@ export async function searchAssets(query, { auth } = {}) {
  */
 const COUNTS_PATH = "/v2/ajax/reports/search_counts";
 
+/** search_counts is fussier about auth than search/dam: a bearer-only request
+ *  reaches the controller but crashes upstream ("Call to a member function
+ *  brands() on null" — no web-session context), so the generic hedged
+ *  fetchMine can surface that 500. Dedicated chain: cookie → cookie+bearer
+ *  together → freshly minted cookie. Accept only responses that actually
+ *  carry a facets object. */
+async function fetchCounts(url, auth) {
+  const combos = [];
+  if (auth?.cookie) combos.push({ Cookie: auth.cookie });
+  if (auth?.cookie && auth?.token) combos.push({ Cookie: auth.cookie, Authorization: `Bearer ${auth.token}` });
+  if (auth?.token) combos.push({ Authorization: `Bearer ${auth.token}` });
+  if (!auth) {
+    const cookie = await getSessionCookie({});
+    if (cookie) combos.push({ Cookie: cookie });
+  }
+  let last = { ok: false, status: 401, authRequired: true, error: "No usable credentials" };
+  for (const headers of combos) {
+    const r = await attemptFetch(url, { method: "GET", authHeaders: headers, timeoutMs: 60000 });
+    if (r.ok && r.data && r.data.facets) return r;
+    if (r.status !== 401) last = r; else if (last.status === 401) last = r;
+  }
+  if (auth?.token) {
+    const v = await prontoVerifyToken(auth.token);
+    if (v.ok && v.cookie) {
+      await saveCookie(auth, v.cookie);
+      const r = await attemptFetch(url, { method: "GET", authHeaders: { Cookie: v.cookie }, timeoutMs: 60000 });
+      if (r.ok && r.data && r.data.facets) return r;
+      const r2 = await attemptFetch(url, { method: "GET", authHeaders: { Cookie: v.cookie, Authorization: `Bearer ${auth.token}` }, timeoutMs: 60000 });
+      if (r2.ok && r2.data && r2.data.facets) return r2;
+      last = r2.status !== 401 ? r2 : r;
+    }
+  }
+  if (last.status === 401) last.authRequired = true;
+  return last;
+}
+
 export async function facetCounts(query, { auth, limit = 20 } = {}) {
   const params = buildSearchParams(query);
   params.delete("pos");
@@ -309,7 +345,7 @@ export async function facetCounts(query, { auth, limit = 20 } = {}) {
   params.set("limit", String(Math.min(Math.max(Number(limit) || 20, 1), 50)));
   params.set("order", "desc");
   const url = `${config.prontoBaseUrl}${COUNTS_PATH}?${params.toString()}`;
-  const r = await fetchMine(url, { method: "GET", timeoutMs: 60000, auth });
+  const r = await fetchCounts(url, auth);
   if (!r.ok) return r;
   const facets = r.data?.facets || {};
   const norm = (g) => (Array.isArray(g) ? g : (g && Array.isArray(g.buckets) ? g.buckets : []));
