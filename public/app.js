@@ -65,8 +65,10 @@ async function runSearch() {
   if (qs === INFLIGHT_QS) return;       // identical request already in flight
   INFLIGHT_QS = qs;
   const seq = ++FETCH_SEQ;
-  // OPTIMISTIC UI: reflect the new filter state instantly — chips update and the
-  // stale grid clears BEFORE the request goes out; the loader is the feedback.
+  // OPTIMISTIC UI: reflect the new filter state instantly — the URL bar and chips
+  // update and the stale grid clears BEFORE the request goes out; the loader is
+  // the feedback.
+  syncUrl();
   renderActiveChips();
   $("grid").innerHTML = "";
   $("resultCount").textContent = "";
@@ -93,8 +95,99 @@ async function runSearch() {
 }
 function newSearch() { state.page = 1; runSearch(); }
 
+/* ---------------- URL <-> state (refreshable / shareable / back-button views) ----------------
+ * Every search-affecting change is pushed into the address bar as a readable
+ * querystring; a page refresh (or a pasted link) restores the exact same view,
+ * and browser back/forward walk the search history. id+label pairs (brand,
+ * office, ...) are encoded as "id~label" so chips can render without a lookup. */
+const pairTo = (v) => `${v.id}~${v.label}`;
+function pairFrom(s) {
+  const i = s.indexOf("~");
+  return i < 0 ? { id: s, label: s } : { id: s.slice(0, i), label: s.slice(i + 1) };
+}
+
+function urlFromState() {
+  const p = new URLSearchParams();
+  if (state.q) p.set("q", state.q);
+  if (state.exact) p.set("exact", "1");
+  if (state.status && state.status !== "all") p.set("status", state.status);
+  if (state.archived) p.set("archived", "y");
+  if (state.brand) p.set("brand", pairTo(state.brand));
+  if (state.audience) p.set("audience", state.audience);
+  if (state.projecttype) p.set("ptype", pairTo(state.projecttype));
+  if (state.assettype) p.set("atype", pairTo(state.assettype));
+  if (state.doctype) p.set("doctype", state.doctype);
+  state.offices.forEach((o) => p.append("office", pairTo(o)));
+  state.tags.forEach((t) => p.append("tag", t));
+  if (state.collection) p.set("collection", state.collection);
+  if (state.rating) p.set("rating", state.rating);
+  if (state.dateFrom) p.set("from", state.dateFrom);
+  if (state.dateTo) p.set("to", state.dateTo);
+  if (state.author) p.set("author", state.author);
+  if (state.sort) p.set("sort", state.sort);
+  if (state.rows !== 30) p.set("rows", String(state.rows));
+  if (state.page > 1) p.set("page", String(state.page));
+  const qs = p.toString();
+  return location.pathname + (qs ? "?" + qs : "");
+}
+
+function stateFromUrl() {
+  const p = new URLSearchParams(location.search);
+  state.q = p.get("q") || "";
+  state.exact = p.get("exact") === "1";
+  state.status = p.get("status") || "all";
+  state.archived = p.get("archived") === "y";
+  state.brand = p.get("brand") ? pairFrom(p.get("brand")) : null;
+  state.audience = p.get("audience") || "";
+  state.projecttype = p.get("ptype") ? pairFrom(p.get("ptype")) : null;
+  state.assettype = p.get("atype") ? pairFrom(p.get("atype")) : null;
+  state.doctype = p.get("doctype") || "";
+  state.offices = p.getAll("office").map(pairFrom);
+  state.tags = p.getAll("tag");
+  state.collection = p.get("collection") || "";
+  state.rating = p.get("rating") || "";
+  state.dateFrom = p.get("from") || "";
+  state.dateTo = p.get("to") || "";
+  state.author = p.get("author") || "";
+  state.sort = p.get("sort") || "";
+  state.rows = parseInt(p.get("rows"), 10) || 30;
+  state.page = Math.max(1, parseInt(p.get("page"), 10) || 1);
+}
+
+/* Push the current state into visible controls (used on load and on back/forward). */
+function applyStateToControls() {
+  $("f_q").value = state.q;
+  $("f_exact").checked = state.exact;
+  $("f_status").value = state.status;
+  $("f_archived").checked = state.archived;
+  $("f_doctype").value = state.doctype;
+  $("f_rating").value = state.rating;
+  $("f_dateFrom").value = state.dateFrom;
+  $("f_dateTo").value = state.dateTo;
+  $("f_author").value = state.author;
+  $("f_sort").value = state.sort;
+  $("f_rows").value = String(state.rows);
+  // These two are async-populated; loadStaticFacets() re-applies once options exist.
+  $("f_audience").value = state.audience;
+  $("f_collection").value = state.collection;
+  setBrand(state.brand); setProjecttype(state.projecttype); setAssettype(state.assettype);
+  renderOfficeChips(); renderTagChips();
+}
+
+let RESTORING = false;
+function syncUrl() {
+  if (RESTORING) return;                       // back/forward: URL is already right
+  const url = urlFromState();
+  if (url === location.pathname + location.search) return;
+  history.pushState(null, "", url);
+}
+window.addEventListener("popstate", () => {
+  RESTORING = true;
+  try { stateFromUrl(); applyStateToControls(); runSearch(); } finally { RESTORING = false; }
+});
+
 /* ---------------- rendering ---------------- */
-function esc(s) { return String(s ?? "").replace(/[&<>\"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
 function fmtSize(bytes) {
   const b = Number(bytes);
@@ -124,20 +217,20 @@ function renderGrid(assets) {
     const sClass = "s-" + status.toLowerCase().replace(/[^a-z]+/g, "-");
     const meta = [a.author, fmtSize(a.filesize), fmtDate(a.uploaddate)].filter(Boolean).join(" | ");
     const iter = a.asset_iteration ? ` <small>(V${esc(a.asset_iteration)})</small>` : "";
-    return `<div class=\"card\" data-id=\"${esc(a.assetid)}\">
-      <div class=\"card-thumb\">
-        <div class=\"ext\">${esc(extOf(a.title))}</div>
-        <img decoding=\"async\" fetchpriority=\"low\" loading=\"lazy\" src=\"/api/mine/thumb/${esc(a.assetid)}\" alt=\"\"
-             onerror=\"this.remove()\" />
-        ${status ? `<span class=\"card-status ${sClass}\">${esc(status)}</span>` : ""}
-        <div class=\"card-actions\">
-          <a href=\"/api/mine/download/${esc(a.assetid)}\" title=\"Download\" download>&#8681;</a>
+    return `<div class="card" data-id="${esc(a.assetid)}">
+      <div class="card-thumb">
+        <div class="ext">${esc(extOf(a.title))}</div>
+        <img decoding="async" fetchpriority="low" loading="lazy" src="/api/mine/thumb/${esc(a.assetid)}" alt=""
+             onerror="this.remove()" />
+        ${status ? `<span class="card-status ${sClass}">${esc(status)}</span>` : ""}
+        <div class="card-actions">
+          <a href="/api/mine/download/${esc(a.assetid)}" title="Download" download>&#8681;</a>
         </div>
       </div>
-      <div class=\"card-body\">
-        <div class=\"card-title\" title=\"${esc(a.title)}\">${esc(a.title)}${iter}</div>
-        ${a.brandname ? `<div class=\"card-brand\">${esc(a.brandname)}</div>` : ""}
-        ${meta ? `<div class=\"card-meta\">${esc(meta)}</div>` : ""}
+      <div class="card-body">
+        <div class="card-title" title="${esc(a.title)}">${esc(a.title)}${iter}</div>
+        ${a.brandname ? `<div class="card-brand">${esc(a.brandname)}</div>` : ""}
+        ${meta ? `<div class="card-meta">${esc(meta)}</div>` : ""}
       </div>
     </div>`;
   }).join("");
@@ -150,7 +243,7 @@ function renderPagination() {
   const cur = Math.min(state.page, pages);
   const parts = [];
   const btn = (p, label, opts = {}) =>
-    `<button class=\"page-btn ${opts.cur ? "cur" : ""}\" data-page=\"${p}\" ${opts.dis ? "disabled" : ""}>${label}</button>`;
+    `<button class="page-btn ${opts.cur ? "cur" : ""}" data-page="${p}" ${opts.dis ? "disabled" : ""}>${label}</button>`;
   parts.push(btn(cur - 1, "‹", { dis: cur === 1 }));
   const win = [];
   const push = (p) => { if (p >= 1 && p <= pages && !win.includes(p)) win.push(p); };
@@ -160,7 +253,7 @@ function renderPagination() {
   win.sort((a, b) => a - b);
   let last = 0;
   for (const p of win) {
-    if (p - last > 1) parts.push(`<span class=\"page-gap\">…</span>`);
+    if (p - last > 1) parts.push(`<span class="page-gap">…</span>`);
     parts.push(btn(p, String(p), { cur: p === cur }));
     last = p;
   }
@@ -199,7 +292,7 @@ function renderActiveChips() {
 
   const box = $("activeChips");
   box.innerHTML = chips.map((c, i) =>
-    `<span class=\"chip\"><span>${esc(c.label)}</span><button data-i=\"${i}\" title=\"Remove\">×</button></span>`).join("");
+    `<span class="chip"><span>${esc(c.label)}</span><button data-i="${i}" title="Remove">×</button></span>`).join("");
   box.querySelectorAll("button").forEach((b) => {
     b.addEventListener("click", () => { chips[Number(b.dataset.i)].clear(); newSearch(); });
   });
@@ -215,8 +308,8 @@ function wireSayt({ input, menu, fetcher, onPick, minChars = 0 }) {
   const open = () => mn.classList.add("open");
   const render = () => {
     mn.innerHTML = items.length
-      ? items.map((it, i) => `<div class=\"sayt-item\" data-i=\"${i}\">${esc(it.label)}</div>`).join("")
-      : `<div class=\"sayt-empty\">No matches</div>`;
+      ? items.map((it, i) => `<div class="sayt-item" data-i="${i}">${esc(it.label)}</div>`).join("")
+      : `<div class="sayt-empty">No matches</div>`;
     mn.querySelectorAll(".sayt-item").forEach((el) => {
       el.addEventListener("mousedown", (e) => {       // mousedown beats input blur
         e.preventDefault();
@@ -244,7 +337,7 @@ const lookupFetcher = (kind) => async (kw) =>
   (await api(`/api/mine/lookup/${kind}?keyword=${encodeURIComponent(kw)}&limit=25`)).items;
 
 function chipHtml(label) {
-  return `<span class=\"chip\"><span>${esc(label)}</span><button title=\"Remove\">×</button></span>`;
+  return `<span class="chip"><span>${esc(label)}</span><button title="Remove">×</button></span>`;
 }
 function setBrand(v) {
   state.brand = v;
@@ -281,19 +374,21 @@ async function loadStaticFacets() {
   // Audience list
   try {
     const r = await api("/api/mine/lookup/audiences?limit=100");
-    $("f_audience").innerHTML = `<option value=\"\">Any audience</option>` +
-      r.items.map((i) => `<option value=\"${esc(i.id)}\">${esc(i.label)}</option>`).join("");
+    $("f_audience").innerHTML = `<option value="">Any audience</option>` +
+      r.items.map((i) => `<option value="${esc(i.id)}">${esc(i.label)}</option>`).join("");
+    $("f_audience").value = state.audience;    // re-apply URL-restored selection
   } catch {}
   // Collections
   try {
     const r = await api("/api/mine/collections?limit=50");
-    $("f_collection").innerHTML = `<option value=\"\">Any collection</option>` +
-      r.items.map((i) => `<option value=\"${esc(i.id)}\">${esc(i.label)}</option>`).join("");
+    $("f_collection").innerHTML = `<option value="">Any collection</option>` +
+      r.items.map((i) => `<option value="${esc(i.id)}">${esc(i.label)}</option>`).join("");
+    $("f_collection").value = state.collection; // re-apply URL-restored selection
   } catch {}
   // Popular tags
   try {
     const r = await api("/api/mine/tags/popular?limit=15");
-    $("popularTags").innerHTML = r.items.map((t) => `<span class=\"pop-tag\">${esc(t.tag)}</span>`).join("");
+    $("popularTags").innerHTML = r.items.map((t) => `<span class="pop-tag">${esc(t.tag)}</span>`).join("");
     $("popularTags").querySelectorAll(".pop-tag").forEach((el) => {
       el.addEventListener("click", () => {
         const tag = el.textContent;
@@ -301,6 +396,8 @@ async function loadStaticFacets() {
       });
     });
   } catch {}
+  // Audience/collection labels in the chip bar depend on the options above.
+  renderActiveChips();
 }
 
 /* ---------------- wiring ---------------- */
@@ -557,6 +654,8 @@ async function main() {
     if (!who || who.authRequired) { showLogin(who); return; }
   } catch { showLogin(AUTH_INFO); return; }
   hideLogin();
+  stateFromUrl();          // refresh / pasted link / bookmarks restore the exact view
+  applyStateToControls();
   loadStaticFacets();
   runSearch();
 }

@@ -24,7 +24,7 @@
     };
   </script>
   <script src="/base/v1/loader.js"></script>
-  <link rel="stylesheet" href="/styles.css?v=8" />
+  <link rel="stylesheet" href="/styles.css?v=9" />
 </head>
 <body>
   <!-- <pronto-nav> + <pronto-banner> auto-mounted here -->
@@ -37,6 +37,15 @@
         <button id="searchBtn" class="btn primary" title="Search">Search</button>
       </div>
       <label class="chk facet-exact"><input type="checkbox" id="f_exact" /> Exact match</label>
+
+      <fieldset class="facet">
+        <legend>Office</legend>
+        <div class="sayt">
+          <input id="f_office" type="text" placeholder="Search offices…" autocomplete="off" />
+          <div id="officeMenu" class="sayt-menu"></div>
+        </div>
+        <div id="officeChips" class="chips"></div>
+      </fieldset>
 
       <fieldset class="facet">
         <legend>Status</legend>
@@ -93,15 +102,6 @@
           <option value="4">Presentation</option>
           <option value="5">Document</option>
         </select>
-      </fieldset>
-
-      <fieldset class="facet">
-        <legend>Office</legend>
-        <div class="sayt">
-          <input id="f_office" type="text" placeholder="Search offices…" autocomplete="off" />
-          <div id="officeMenu" class="sayt-menu"></div>
-        </div>
-        <div id="officeChips" class="chips"></div>
       </fieldset>
 
       <fieldset class="facet">
@@ -234,6 +234,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=8"></script>
+  <script src="/app.js?v=9"></script>
 </body>
 </html>
