@@ -8,7 +8,7 @@ const $ = (id) => document.getElementById(id);
 
 /* ---------------- state ---------------- */
 const state = {
-  q: "", exact: false, status: "all", archived: false, showFinance: false,
+  q: "", exact: false, status: "all", archived: false,
   brand: null,            // {id,label} -> brandcategory
   audience: "",           // id -> asset_purpose
   projecttype: null,      // {id,label} -> projecttypeid
@@ -41,7 +41,6 @@ function buildQuery() {
   if (state.exact && state.q) p.set("exact_match", "1");
   p.set("status", state.status || "all");
   if (state.archived) p.set("archived", "y");
-  if (!state.showFinance) p.set("hidefinance", "1");
   if (state.brand) p.set("brand_id", state.brand.id);   // brand from get-brands; verified live (brandcategory is the CLIENT/category id)
   if (state.audience) p.set("asset_purpose", state.audience);
   if (state.projecttype) p.set("projecttypeid", state.projecttype.id);
@@ -79,8 +78,7 @@ async function runSearch() {
     COUNT = r.count || 0;
     renderGrid(r.assets || []);
     renderPagination();
-    const hid = r.hiddenFinance ? ` · ${r.hiddenFinance} finance docs hidden` : "";
-    $("resultCount").textContent = COUNT ? `${COUNT.toLocaleString()} assets${hid}` : "";
+    $("resultCount").textContent = COUNT ? `${COUNT.toLocaleString()} assets` : "";
     $("emptyState").hidden = (r.assets || []).length > 0;
   } catch (e) {
     if (seq !== FETCH_SEQ) return;
@@ -117,7 +115,9 @@ function extOf(title) {
   return m ? m[1].toUpperCase() : "";
 }
 
+let ASSETS_BY_ID = new Map();
 function renderGrid(assets) {
+  ASSETS_BY_ID = new Map(assets.map((x) => [String(x.assetid), x]));
   const grid = $("grid");
   grid.innerHTML = assets.map((a) => {
     const status = String(a.status || "");
@@ -310,7 +310,6 @@ function wireControls() {
   $("f_exact").addEventListener("change", (e) => { state.exact = e.target.checked; if (state.q) newSearch(); });
   $("f_status").addEventListener("change", (e) => { state.status = e.target.value; newSearch(); });
   $("f_archived").addEventListener("change", (e) => { state.archived = e.target.checked; newSearch(); });
-  $("f_finance").addEventListener("change", (e) => { state.showFinance = e.target.checked; newSearch(); });
   $("f_audience").addEventListener("change", (e) => { state.audience = e.target.value; newSearch(); });
   $("f_doctype").addEventListener("change", (e) => { state.doctype = e.target.value; newSearch(); });
   $("f_collection").addEventListener("change", (e) => { state.collection = e.target.value; newSearch(); });
@@ -331,7 +330,7 @@ function wireControls() {
 
   $("clearBtn").addEventListener("click", () => {
     Object.assign(state, {
-      q: "", exact: false, status: "all", archived: false, showFinance: false, brand: null, audience: "",
+      q: "", exact: false, status: "all", archived: false, brand: null, audience: "",
       projecttype: null, assettype: null, doctype: "", offices: [], tags: [],
       collection: "", rating: "", dateFrom: "", dateTo: "", author: "", page: 1,
     });
@@ -339,7 +338,7 @@ function wireControls() {
     ["f_status"].forEach((id) => { $(id).value = "all"; });
     ["f_audience", "f_doctype", "f_collection", "f_rating"].forEach((id) => { $(id).value = ""; });
     ["f_dateFrom", "f_dateTo"].forEach((id) => { $(id).value = ""; });
-    $("f_exact").checked = false; $("f_archived").checked = false; $("f_finance").checked = false;
+    $("f_exact").checked = false; $("f_archived").checked = false;
     setBrand(null); setProjecttype(null); setAssettype(null);
     renderOfficeChips(); renderTagChips();
     runSearch();
@@ -367,6 +366,61 @@ function wireControls() {
       if (!state.offices.some((o) => o.id === it.id)) { state.offices.push(it); renderOfficeChips(); newSearch(); }
     },
   });
+}
+
+/* ---------------- asset detail drawer ---------------- */
+function openDrawer(a) {
+  $("adTitle").textContent = a.title || "Untitled";
+  const img = $("adImg");
+  img.style.display = "";
+  img.onerror = () => { img.style.display = "none"; };   // ext placeholder shows through
+  img.src = "/api/mine/thumb/" + encodeURIComponent(a.assetid);
+  $("adExt").textContent = extOf(a.title);
+  $("adDownload").href = "/api/mine/download/" + encodeURIComponent(a.assetid);
+  const proj = $("adProject");
+  if (a.jobid) {
+    proj.hidden = false;
+    proj.href = "https://havaspronto.com/v2/passport/" + encodeURIComponent(a.jobid);
+    proj.textContent = "Open project in Pronto" + (a.job_extension ? ` (${a.job_extension})` : "") + " \u2197";
+  } else proj.hidden = true;
+  const rows = [];
+  const add = (k, v) => { const s = v === undefined || v === null ? "" : String(v).trim(); if (s && s !== "0") rows.push([k, s]); };
+  add("Brand", a.brandname);
+  add("Client", a.brandCatName);
+  add("Status", a.status);
+  add("Version", a.asset_iteration ? "V" + a.asset_iteration : "");
+  add("Uploaded by", a.author);
+  add("Uploaded", fmtDate(a.uploaddate));
+  add("File size", fmtSize(a.filesize));
+  add("File type", extOf(a.title));
+  add("Office", a.office_name);
+  add("Project", a.jobtitle);
+  add("Job #", a.job_extension);
+  add("Project type", a.projecttype);
+  add("Tags", Array.isArray(a.tags) ? a.tags.join(", ") : a.tags);
+  add("Downloads", a.download_count);
+  add("Market", a.market_name);
+  add("Language", a.language_iso_name);
+  add("Approver", a.mine_asset_approver_name);
+  $("adMeta").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+  $("assetDrawer").classList.add("open");
+  $("drawerScrim").classList.add("open");
+}
+function closeDrawer() {
+  $("assetDrawer").classList.remove("open");
+  $("drawerScrim").classList.remove("open");
+}
+function wireDrawer() {
+  $("grid").addEventListener("click", (e) => {
+    if (e.target.closest(".card-actions")) return;        // per-card download button
+    const card = e.target.closest(".card");
+    if (!card) return;
+    const a = ASSETS_BY_ID.get(String(card.dataset.id));
+    if (a) openDrawer(a);
+  });
+  $("adClose").addEventListener("click", closeDrawer);
+  $("drawerScrim").addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
 }
 
 /* ---------------- login / logout (identical contract to the Dashboard) ---------------- */
@@ -471,6 +525,7 @@ function userLabel(u) { return (u && (u.name || u.email)) || "Signed in"; }
 async function main() {
   wireLogin();
   wireControls();
+  wireDrawer();
   try {
     const r = await fetch("/api/auth/status");
     const who = await r.json().catch(() => null);

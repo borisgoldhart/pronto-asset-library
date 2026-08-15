@@ -49,7 +49,6 @@
           <option value="partial approval">Partial Approval</option>
         </select>
         <label class="chk"><input type="checkbox" id="f_archived" /> Include archived</label>
-        <label class="chk"><input type="checkbox" id="f_finance" /> Show finance docs (QT/PO/IN)</label>
       </fieldset>
 
       <fieldset class="facet">
@@ -182,6 +181,21 @@
       <nav id="pagination" class="pagination"></nav>
     </main>
   </div>
+
+  <!-- Asset detail drawer (flyout from the right) -->
+  <div id="drawerScrim" class="drawer-scrim"></div>
+  <aside id="assetDrawer" class="asset-drawer" aria-label="Asset details">
+    <div class="ad-head">
+      <span id="adTitle" class="ad-title"></span>
+      <button id="adClose" class="ad-close" title="Close">&#10005;</button>
+    </div>
+    <div class="ad-body">
+      <div class="ad-preview"><div class="ext" id="adExt"></div><img id="adImg" alt="" /></div>
+      <a id="adDownload" class="btn primary ad-download" download>&#10515;&nbsp; Download asset</a>
+      <a id="adProject" class="ad-project" target="_blank" rel="noopener">Open project in Pronto &#8599;</a>
+      <dl id="adMeta" class="ad-meta"></dl>
+    </div>
+  </aside>
 
   <!-- Login screen (identical contract to the Reporting Dashboard) -->
   <div id="loginScreen" class="login-screen" hidden>
