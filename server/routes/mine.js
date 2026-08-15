@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { config } from "../config.js";
+import { prontoVerifyToken } from "../session.js";
 import { searchAssets, facetCounts, buildSearchParams, lookup, listCollections, popularTags, resolveThumb, resolveVideo, resolveDownload, DAM_ID } from "../mine.js";
 
 const router = Router();
@@ -58,21 +59,27 @@ router.get("/facets-debug", async (req, res) => {
   };
   const cookieH = auth.cookie ? { Cookie: auth.cookie } : null;
   const bearerH = auth.token ? { Authorization: `Bearer ${auth.token}` } : null;
-  if (cookieH) await attempt("cookie", base + params.toString(), cookieH);
-  if (cookieH) {
-    const p2 = new URLSearchParams(params); p2.set("dam_id", String(DAM_ID));
-    await attempt("cookie+dam_id", base + p2.toString(), cookieH);
+  const qs = base + params.toString();
+  if (cookieH) await attempt("stored-cookie", qs, cookieH);
+  // Fresh cookie minted from the bearer via /v2/api/auth/me
+  let freshH = null;
+  if (auth.token) {
+    const v = await prontoVerifyToken(auth.token);
+    out.push({ label: "mint-fresh-cookie", ok: v.ok, gotCookie: !!v.cookie });
+    if (v.ok && v.cookie) freshH = { Cookie: v.cookie };
   }
-  if (bearerH) await attempt("bearer", base + params.toString(), bearerH);
-  if (cookieH && bearerH) await attempt("cookie+bearer", base + params.toString(), { ...cookieH, ...bearerH });
-  if (cookieH) {
+  if (freshH) await attempt("fresh-cookie", qs, freshH);
+  // Warm the web session by loading the Mine page, then retry
+  const warm = async (label, h) => {
     try {
-      const w = await fetch(`${config.prontoBaseUrl}/mine.php?dam_id=${DAM_ID}`, { headers: cookieH });
-      await w.text();
-      out.push({ label: "warm-mine.php", status: w.status });
-    } catch (e) { out.push({ label: "warm-mine.php", err: String(e) }); }
-    await attempt("cookie-after-warm", base + params.toString(), cookieH);
-  }
+      const w = await fetch(`${config.prontoBaseUrl}/v2/mine`, { headers: { ...h, Accept: "text/html" }, redirect: "follow" });
+      const t = await w.text();
+      out.push({ label, status: w.status, len: t.length, login: /data-page="login"/.test(t.slice(0, 400)) });
+    } catch (e) { out.push({ label, err: String(e) }); }
+  };
+  if (freshH) { await warm("warm-v2mine-fresh", freshH); await attempt("fresh-cookie-after-warm", qs, freshH); }
+  else if (cookieH) { await warm("warm-v2mine-stored", cookieH); await attempt("stored-cookie-after-warm", qs, cookieH); }
+  if (freshH && bearerH) await attempt("fresh-cookie+bearer", qs, { ...freshH, ...bearerH });
   res.json({ ok: true, hasCookie: !!cookieH, hasToken: !!bearerH, debug: out });
 });
 
