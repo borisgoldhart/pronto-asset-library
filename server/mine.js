@@ -358,24 +358,36 @@ export async function popularTags({ limit = 20, auth } = {}) {
 
 async function fetchBinary(url, headers, { follow = false } = {}) {
   try {
-    const res = await fetch(url, { method: "GET", headers, redirect: follow ? "follow" : "manual" });
-    if (!follow && res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get("location");
-      if (loc) return { ok: true, redirect: loc };
-    }
-    if (res.ok) {
-      const ct = res.headers.get("content-type") || "";
-      if (ct && !/text\/html/i.test(ct)) {
-        const buf = Buffer.from(await res.arrayBuffer());
-        return {
-          ok: true, body: buf,
-          contentType: ct || "application/octet-stream",
-          contentDisposition: res.headers.get("content-disposition"),
-        };
+    // Follow SAME-SITE redirect hops ourselves (legacy PHP routes like flvopen.php
+    // hop through relative Locations before landing on the CDN); hand the browser
+    // only the final OFF-SITE absolute URL. Relative Locations must be resolved
+    // against the current hop or the browser would resolve them against OUR origin.
+    let cur = url;
+    for (let hop = 0; hop < 5; hop++) {
+      const res = await fetch(cur, { method: "GET", headers, redirect: "manual" });
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get("location");
+        if (!loc) return { ok: false, status: res.status, error: "Redirect without Location" };
+        const abs = new URL(loc, cur).toString();
+        if (!follow && !abs.startsWith(config.prontoBaseUrl)) return { ok: true, redirect: abs };
+        cur = abs;                                   // same-site hop (or follow mode): keep going
+        continue;
       }
-      return { ok: false, status: 401, error: "HTML returned (not signed in for this endpoint)" };
+      if (res.ok) {
+        const ct = res.headers.get("content-type") || "";
+        if (ct && !/text\/html/i.test(ct)) {
+          const buf = Buffer.from(await res.arrayBuffer());
+          return {
+            ok: true, body: buf,
+            contentType: ct || "application/octet-stream",
+            contentDisposition: res.headers.get("content-disposition"),
+          };
+        }
+        return { ok: false, status: 401, error: "HTML returned (not signed in for this endpoint)" };
+      }
+      return { ok: false, status: res.status, error: `HTTP ${res.status}` };
     }
-    return { ok: false, status: res.status, error: `HTTP ${res.status}` };
+    return { ok: false, status: 508, error: "Too many redirect hops" };
   } catch (err) {
     return { ok: false, status: 0, error: String(err) };
   }
