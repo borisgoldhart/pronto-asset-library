@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { config } from "../config.js";
-import { prontoVerifyToken } from "../session.js";
+import { prontoVerifyToken, prontoRefreshToken } from "../session.js";
 import { searchAssets, facetCounts, buildSearchParams, lookup, listCollections, popularTags, resolveThumb, resolveVideo, resolveDownload, DAM_ID } from "../mine.js";
 
 const router = Router();
@@ -57,30 +57,53 @@ router.get("/facets-debug", async (req, res) => {
       return !!(j && j.facets);
     } catch (e) { out.push({ label, err: String(e) }); return false; }
   };
-  const cookieH = auth.cookie ? { Cookie: auth.cookie } : null;
-  const bearerH = auth.token ? { Authorization: `Bearer ${auth.token}` } : null;
-  const qs = base + params.toString();
-  if (cookieH) await attempt("stored-cookie", qs, cookieH);
-  // Fresh cookie minted from the bearer via /v2/api/auth/me
-  let freshH = null;
-  if (auth.token) {
-    const v = await prontoVerifyToken(auth.token);
-    out.push({ label: "mint-fresh-cookie", ok: v.ok, gotCookie: !!v.cookie });
-    if (v.ok && v.cookie) freshH = { Cookie: v.cookie };
-  }
-  if (freshH) await attempt("fresh-cookie", qs, freshH);
-  // Warm the web session by loading the Mine page, then retry
-  const warm = async (label, h) => {
+  const captureCookies = (r) => {
     try {
-      const w = await fetch(`${config.prontoBaseUrl}/v2/mine`, { headers: { ...h, Accept: "text/html" }, redirect: "follow" });
-      const t = await w.text();
-      out.push({ label, status: w.status, len: t.length, login: /data-page="login"/.test(t.slice(0, 400)) });
-    } catch (e) { out.push({ label, err: String(e) }); }
+      const list = typeof r.headers.getSetCookie === "function"
+        ? r.headers.getSetCookie()
+        : (r.headers.get("set-cookie") ? [r.headers.get("set-cookie")] : []);
+      const byName = new Map();
+      list.map((c) => c.split(";")[0].trim())
+        .filter((p) => p && /=/.test(p) && !/=deleted$/i.test(p))
+        .forEach((p) => byName.set(p.split("=")[0], p));
+      return [...byName.values()].join("; ");
+    } catch { return ""; }
   };
-  if (freshH) { await warm("warm-v2mine-fresh", freshH); await attempt("fresh-cookie-after-warm", qs, freshH); }
-  else if (cookieH) { await warm("warm-v2mine-stored", cookieH); await attempt("stored-cookie-after-warm", qs, cookieH); }
-  if (freshH && bearerH) await attempt("fresh-cookie+bearer", qs, { ...freshH, ...bearerH });
-  res.json({ ok: true, hasCookie: !!cookieH, hasToken: !!bearerH, debug: out });
+  const cookieH = auth.cookie ? { Cookie: auth.cookie } : null;
+  const bearerH = () => (auth.token ? { Authorization: `Bearer ${auth.token}` } : null);
+  const qs = base + params.toString();
+  // Richard's exact working syntax (rows present, no status param)
+  const rqs = base + `limit=20&damId=${DAM_ID}&rows=60&order=desc`;
+  if (cookieH) await attempt("stored-cookie", qs, cookieH);
+  if (bearerH()) await attempt("richard-syntax-bearer", rqs, bearerH());
+  if (cookieH) await attempt("richard-syntax-cookie", rqs, cookieH);
+  // Guest web session (GET /v2/ sets a fresh laravel session) + bearer identity:
+  // the PHP fatal may simply be "no web session object at all".
+  let guestH = null;
+  try {
+    const g = await fetch(`${config.prontoBaseUrl}/v2/`, { headers: { Accept: "text/html" }, redirect: "follow" });
+    await g.text();
+    const gc = captureCookies(g);
+    out.push({ label: "guest-session", status: g.status, gotCookie: !!gc });
+    if (gc) guestH = { Cookie: gc };
+  } catch (e) { out.push({ label: "guest-session", err: String(e) }); }
+  if (guestH && bearerH()) await attempt("guest-cookie+bearer", qs, { ...guestH, ...bearerH() });
+  if (guestH && bearerH()) await attempt("guest-cookie+bearer-richard-syntax", rqs, { ...guestH, ...bearerH() });
+  // Cookie from the token REFRESH response (the login-response cookie was the
+  // Dashboard's fast path; refresh is the closest thing we can mint from a token).
+  if (auth.token) {
+    const rf = await prontoRefreshToken(auth.token);
+    out.push({ label: "refresh-grant", ok: rf.ok, gotCookie: !!rf.cookie });
+    if (rf.ok && rf.token) {
+      auth.token = rf.token;                    // persist rotation so the session stays valid
+      if (typeof auth.onTokenRefresh === "function") { try { await auth.onTokenRefresh(rf.token, rf.cookie || null); } catch {} }
+      if (rf.cookie) {
+        await attempt("refresh-cookie", qs, { Cookie: rf.cookie });
+        await attempt("refresh-cookie+bearer", qs, { Cookie: rf.cookie, Authorization: `Bearer ${rf.token}` });
+      }
+    }
+  }
+  res.json({ ok: true, hasCookie: !!cookieH, hasToken: !!auth.token, debug: out });
 });
 
 /** SAYT lookups: /api/mine/lookup/brands?keyword=ha  (brands | project-types |
