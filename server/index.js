@@ -36,14 +36,31 @@ const siblingBase = path.resolve(__dirname, "..", "..", "pronto-base");
 const vendoredBase = path.resolve(__dirname, "..", "pronto-base");
 const baseDir = fs.existsSync(vendoredBase) ? vendoredBase : siblingBase;
 app.use("/base", express.static(baseDir, {
-  etag: true,
+  etag: false,          // mtime-based ETags are unreliable in the Vercel bundle (see below)
+  lastModified: false,
   setHeaders: (res) => res.setHeader("Cache-Control", "no-cache"),
 }));
 
+/* NOTE on caching: express.static's weak ETag is mtime+size, and inside the
+ * Vercel bundle every file has a FIXED mtime — so a deploy that changes a file
+ * without changing its byte size revalidates to a 304 and browsers keep the
+ * stale copy (this served a two-deploys-old index.html). HTML is therefore
+ * no-store (tiny, always fresh, and it carries the ?v=N asset versions);
+ * CSS/JS are immutable-cached and busted by the version bump. */
 app.use(express.static(publicDir, {
-  etag: true,
-  setHeaders: (res) => res.setHeader("Cache-Control", "no-cache"),
+  etag: false,
+  lastModified: false,
+  index: false,
+  setHeaders: (res, filePath) => {
+    res.setHeader("Cache-Control", /\.(css|js)$/.test(filePath)
+      ? "public, max-age=86400, immutable"
+      : "no-cache");
+  },
 }));
+app.get("/", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.sendFile(path.join(publicDir, "index.html"));
+});
 
 export default app;
 
