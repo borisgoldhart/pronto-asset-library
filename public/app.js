@@ -370,14 +370,14 @@ function wireControls() {
 
 /* ---------------- asset detail drawer ---------------- */
 function openDrawer(a) {
-  $("adTitle").textContent = a.title || "Untitled";
-  const img = $("adImg");
+  $("dwTitle").textContent = a.title || "Untitled";
+  const img = $("dwImg");
   img.style.display = "";
   img.onerror = () => { img.style.display = "none"; };   // ext placeholder shows through
   img.src = "/api/mine/thumb/" + encodeURIComponent(a.assetid);
-  $("adExt").textContent = extOf(a.title);
-  $("adDownload").href = "/api/mine/download/" + encodeURIComponent(a.assetid);
-  const proj = $("adProject");
+  $("dwExt").textContent = extOf(a.title);
+  $("dwDownload").href = "/api/mine/download/" + encodeURIComponent(a.assetid);
+  const proj = $("dwProject");
   if (a.jobid) {
     proj.hidden = false;
     proj.href = "https://havaspronto.com/v2/passport/" + encodeURIComponent(a.jobid);
@@ -402,7 +402,7 @@ function openDrawer(a) {
   add("Market", a.market_name);
   add("Language", a.language_iso_name);
   add("Approver", a.mine_asset_approver_name);
-  $("adMeta").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+  $("dwMeta").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
   $("assetDrawer").classList.add("open");
   $("drawerScrim").classList.add("open");
 }
@@ -418,7 +418,7 @@ function wireDrawer() {
     const a = ASSETS_BY_ID.get(String(card.dataset.id));
     if (a) openDrawer(a);
   });
-  $("adClose").addEventListener("click", closeDrawer);
+  $("dwClose").addEventListener("click", closeDrawer);
   $("drawerScrim").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
 }
