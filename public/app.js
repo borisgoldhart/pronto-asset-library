@@ -394,8 +394,11 @@ function openDrawer(a) {
   const proj = $("dwProject");
   if (a.jobid) {
     proj.hidden = false;
-    proj.href = "https://havaspronto.com/v2/passport/" + encodeURIComponent(a.jobid);
-    proj.textContent = "Open project in Pronto" + (a.job_extension ? ` (${a.job_extension})` : "") + " \u2197";
+    // Deep link to the asset inside the project's Files tab when we know the
+    // directory: /v2/passport/<jobid>/files/<dirid>#<assetid>
+    proj.href = "https://havaspronto.com/v2/passport/" + encodeURIComponent(a.jobid)
+      + (a.dirid ? "/files/" + encodeURIComponent(a.dirid) + "#" + encodeURIComponent(a.assetid) : "");
+    proj.textContent = "Open in project" + (a.job_extension ? ` (${a.job_extension})` : "") + " \u2197";
   } else proj.hidden = true;
   const rows = [];
   const add = (k, v) => { const s = v === undefined || v === null ? "" : String(v).trim(); if (s && s !== "0") rows.push([k, s]); };
