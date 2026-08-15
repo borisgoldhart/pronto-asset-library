@@ -411,15 +411,17 @@ function closeDrawer() {
   $("drawerScrim").classList.remove("open");
 }
 function wireDrawer() {
-  $("grid").addEventListener("click", (e) => {
+  // Defensive: aggressive ad-blocker filter lists can remove elements outright;
+  // a missing node must never take the whole app down.
+  $("grid")?.addEventListener("click", (e) => {
     if (e.target.closest(".card-actions")) return;        // per-card download button
     const card = e.target.closest(".card");
     if (!card) return;
     const a = ASSETS_BY_ID.get(String(card.dataset.id));
     if (a) openDrawer(a);
   });
-  $("dwClose").addEventListener("click", closeDrawer);
-  $("drawerScrim").addEventListener("click", closeDrawer);
+  $("dwClose")?.addEventListener("click", closeDrawer);
+  $("drawerScrim")?.addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
 }
 
@@ -525,7 +527,7 @@ function userLabel(u) { return (u && (u.name || u.email)) || "Signed in"; }
 async function main() {
   wireLogin();
   wireControls();
-  wireDrawer();
+  try { wireDrawer(); } catch (e) { console.warn("drawer wiring skipped:", e); }
   try {
     const r = await fetch("/api/auth/status");
     const who = await r.json().catch(() => null);
