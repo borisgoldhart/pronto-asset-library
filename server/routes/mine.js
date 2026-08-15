@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { searchAssets, lookup, listCollections, popularTags, resolveThumb, resolveVideo, resolveDownload, DAM_ID } from "../mine.js";
+import { searchAssets, facetCounts, lookup, listCollections, popularTags, resolveThumb, resolveVideo, resolveDownload, DAM_ID } from "../mine.js";
 
 const router = Router();
 
@@ -22,6 +22,15 @@ router.get("/search", async (req, res) => {
   const r = await searchAssets(req.query, { auth: p.auth });
   if (!r.ok) return res.status(r.status || 502).json({ ok: false, error: r.error, authRequired: r.authRequired });
   res.json({ ok: true, count: r.count, assets: r.assets, meta: r.meta, damId: DAM_ID });
+});
+
+/** Facet counts for the left nav — same filter params as /search. */
+router.get("/facets", async (req, res) => {
+  const p = requireAuthish(req, res);
+  if (!p) return;
+  const r = await facetCounts(req.query, { auth: p.auth, limit: req.query.limit });
+  if (!r.ok) return res.status(r.status || 502).json({ ok: false, error: r.error, authRequired: r.authRequired });
+  res.json({ ok: true, count: r.count, groups: r.groups });
 });
 
 /** SAYT lookups: /api/mine/lookup/brands?keyword=ha  (brands | project-types |

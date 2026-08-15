@@ -55,6 +55,32 @@ const ARRAY_PARAMS = new Set([
   "officeid", "countryiso", "tag", "job_strategic_imperative_id",
 ]);
 
+/** Facet drill-down params — SOLR field filters accepted by BOTH /v2/search/dam
+ *  and /v2/ajax/reports/search_counts (each verified live 15 Aug 2026, exact
+ *  count parity). Values MUST be wrapped in double quotes upstream: unquoted
+ *  multi-word values get tokenised and match the wrong subset (e.g. unquoted
+ *  "Retail Single Serve" → 52 rows vs the correct 6,887).
+ *  NOT filterable via the public bridge (params ignored or matching an empty
+ *  field): asset_business_line, mine_channel_name, asset_portfolio_name. */
+const FACET_PARAMS = new Set([
+  "language_name",      // facet field: language_name
+  "category_name",      // facet field: mine_category_name
+  "mine_asset_origin",  // facet field: mine_asset_origin
+  "asset_format",       // facet field: mine_asset_format
+  "dimension_value",    // facet field: mine_dimension_value
+  "asset_market_name",  // facet field: asset_market_name
+]);
+
+/** Facet groups surfaced in the left nav, in display order. */
+export const FACET_GROUPS = [
+  { param: "language_name",     field: "language_name",       label: "Language" },
+  { param: "category_name",     field: "mine_category_name",  label: "Category" },
+  { param: "mine_asset_origin", field: "mine_asset_origin",   label: "Asset origin" },
+  { param: "asset_format",      field: "mine_asset_format",   label: "Format" },
+  { param: "dimension_value",   field: "mine_dimension_value", label: "Dimensions" },
+  { param: "asset_market_name", field: "asset_market_name",   label: "Market" },
+];
+
 const MAX_ROWS = 100;
 
 /** Build the search querystring from an untrusted client query object. */
@@ -83,6 +109,12 @@ export function buildSearchParams(query = {}) {
         if (one !== undefined && one !== null && String(one) !== "") {
           params.append(`${key}[]`, String(one));
         }
+      }
+    } else if (FACET_PARAMS.has(key)) {
+      const vals = Array.isArray(v) ? v : [v];
+      for (const one of vals) {
+        const s = String(one ?? "").replace(/"/g, "").trim();
+        if (s) params.append(`${key}[]`, `"${s}"`);   // quoted: see FACET_PARAMS note
       }
     }
   }
@@ -256,6 +288,39 @@ export async function searchAssets(query, { auth } = {}) {
     assets: Array.isArray(d.assets) ? d.assets : [],
     meta: { start: d.meta?.start, rows: d.meta?.rows, sort: d.meta?.sort, order: d.meta?.order },
   };
+}
+
+/**
+ * Facet counts for the left nav.
+ *   GET {base}/v2/ajax/reports/search_counts?<same filter params as search>&limit=N&order=desc
+ * Accepts every search filter (q, status, brand_id, officeid[], startDate, facet
+ * drill-downs, ...) and returns { response:{numFound}, facets:{<field>:[{val,count}]} }.
+ * Notes from live probing (15 Aug 2026): damId and the legacy `key` param are
+ * ignored; bucket arrays are sometimes wrapped as {buckets:[...]}; numFound
+ * matches /v2/search/dam count exactly for the same filters.
+ */
+const COUNTS_PATH = "/v2/ajax/reports/search_counts";
+
+export async function facetCounts(query, { auth, limit = 20 } = {}) {
+  const params = buildSearchParams(query);
+  params.delete("pos");
+  params.delete("rows");
+  params.delete("sort");
+  params.set("limit", String(Math.min(Math.max(Number(limit) || 20, 1), 50)));
+  params.set("order", "desc");
+  const url = `${config.prontoBaseUrl}${COUNTS_PATH}?${params.toString()}`;
+  const r = await fetchMine(url, { method: "GET", timeoutMs: 60000, auth });
+  if (!r.ok) return r;
+  const facets = r.data?.facets || {};
+  const norm = (g) => (Array.isArray(g) ? g : (g && Array.isArray(g.buckets) ? g.buckets : []));
+  const groups = FACET_GROUPS.map((g) => ({
+    param: g.param,
+    label: g.label,
+    items: norm(facets[g.field])
+      .filter((b) => b && b.val != null && String(b.val).trim() !== "")
+      .map((b) => ({ value: String(b.val), count: b.count ?? 0 })),
+  }));
+  return { ok: true, status: r.status, authUsed: r.authUsed, count: r.data?.response?.numFound ?? null, groups };
 }
 
 /** The Audience filter (-> asset_purpose param) is dam-level config rendered

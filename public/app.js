@@ -20,10 +20,23 @@ const state = {
   rating: "",             // -> rating
   dateFrom: "", dateTo: "",  // -> startDate / endDate
   author: "",
+  facets: {},             // {param: [value,...]} -> facet drill-downs (see FACET_LABELS)
   sort: "", rows: 30, page: 1,
 };
 let COUNT = 0;
 let FETCH_SEQ = 0;
+
+/** Facet groups (must mirror server FACET_PARAMS — the server quotes values
+ *  upstream so multi-word values match exactly). */
+const FACET_LABELS = {
+  language_name: "Language",
+  category_name: "Category",
+  mine_asset_origin: "Asset origin",
+  asset_format: "Format",
+  dimension_value: "Dimensions",
+  asset_market_name: "Market",
+};
+const FACET_KEYS = Object.keys(FACET_LABELS);
 
 /* ---------------- api helper ---------------- */
 async function api(path, opts = {}) {
@@ -53,6 +66,7 @@ function buildQuery() {
   if (state.dateFrom) p.set("startDate", state.dateFrom);
   if (state.dateTo) p.set("endDate", state.dateTo);
   if (state.author) p.set("author", state.author);
+  FACET_KEYS.forEach((k) => (state.facets[k] || []).forEach((v) => p.append(`${k}[]`, v)));
   if (state.sort) p.set("sort", state.sort);
   p.set("rows", String(state.rows));
   p.set("pos", String((state.page - 1) * state.rows));
@@ -70,6 +84,7 @@ async function runSearch() {
   // the feedback.
   syncUrl();
   renderActiveChips();
+  runFacets();                          // fire-and-forget; skips itself when unchanged
   $("grid").innerHTML = "";
   $("resultCount").textContent = "";
   $("loading").hidden = false;
@@ -124,6 +139,7 @@ function urlFromState() {
   if (state.dateFrom) p.set("from", state.dateFrom);
   if (state.dateTo) p.set("to", state.dateTo);
   if (state.author) p.set("author", state.author);
+  FACET_KEYS.forEach((k) => (state.facets[k] || []).forEach((v) => p.append(k, v)));
   if (state.sort) p.set("sort", state.sort);
   if (state.rows !== 30) p.set("rows", String(state.rows));
   if (state.page > 1) p.set("page", String(state.page));
@@ -149,6 +165,8 @@ function stateFromUrl() {
   state.dateFrom = p.get("from") || "";
   state.dateTo = p.get("to") || "";
   state.author = p.get("author") || "";
+  state.facets = {};
+  FACET_KEYS.forEach((k) => { const vals = p.getAll(k).filter(Boolean); if (vals.length) state.facets[k] = vals; });
   state.sort = p.get("sort") || "";
   state.rows = parseInt(p.get("rows"), 10) || 30;
   state.page = Math.max(1, parseInt(p.get("page"), 10) || 1);
@@ -171,7 +189,7 @@ function applyStateToControls() {
   $("f_audience").value = state.audience;
   $("f_collection").value = state.collection;
   setBrand(state.brand); setProjecttype(state.projecttype); setAssettype(state.assettype);
-  renderOfficeChips(); renderTagChips();
+  renderOfficeChips(); renderTagChips(); renderFacetGroups();
 }
 
 let RESTORING = false;
@@ -185,6 +203,82 @@ window.addEventListener("popstate", () => {
   RESTORING = true;
   try { stateFromUrl(); applyStateToControls(); runSearch(); } finally { RESTORING = false; }
 });
+
+/* ---------------- facet counts (left nav) ----------------
+ * /api/mine/facets takes the same filters as /search and returns per-group
+ * value counts for the CURRENT search — so the numbers live-update as the user
+ * types a query, picks a brand, etc. Clicking a value drills down (toggles a
+ * filter); selected values float to the top of their group. */
+let FACET_SEQ = 0;
+let LAST_FACET_QS = null;
+let FACET_DATA = [];
+const FACET_OPEN = {};          // param -> expanded?
+const FACET_COLLAPSED_N = 5;
+
+async function runFacets() {
+  const p = buildQuery();
+  p.delete("pos"); p.delete("rows"); p.delete("sort");   // page/order don't change counts
+  const qs = p.toString();
+  if (qs === LAST_FACET_QS) return;
+  LAST_FACET_QS = qs;
+  const seq = ++FACET_SEQ;
+  $("facetGroups")?.classList.add("fload");
+  try {
+    const r = await api(`/api/mine/facets?${qs}&limit=20`);
+    if (seq !== FACET_SEQ) return;
+    FACET_DATA = r.groups || [];
+    renderFacetGroups();
+  } catch (e) {
+    if (seq === FACET_SEQ) LAST_FACET_QS = null;         // allow retry on next search
+  } finally {
+    if (seq === FACET_SEQ) $("facetGroups")?.classList.remove("fload");
+  }
+}
+
+function renderFacetGroups() {
+  const box = $("facetGroups");
+  if (!box) return;
+  box.innerHTML = FACET_DATA.map((g) => {
+    const sel = state.facets[g.param] || [];
+    // Selected values first (kept visible even when outside the top buckets).
+    const items = sel.map((v) => {
+      const b = (g.items || []).find((x) => x.value === v);
+      return { value: v, count: b ? b.count : null, on: true };
+    });
+    (g.items || []).forEach((b) => { if (!sel.includes(b.value)) items.push({ value: b.value, count: b.count, on: false }); });
+    if (!items.length) return "";
+    const open = !!FACET_OPEN[g.param];
+    const shown = open ? items : items.slice(0, Math.max(FACET_COLLAPSED_N, sel.length));
+    const more = items.length > shown.length;
+    return `<fieldset class="facet fgroup" data-param="${esc(g.param)}">
+      <legend>${esc(g.label)}</legend>
+      <div class="fitems">
+        ${shown.map((it) => `<button type="button" class="fitem${it.on ? " on" : ""}" data-v="${esc(it.value)}" title="${esc(it.value)}">
+          <span class="fv">${esc(it.value)}</span>
+          ${it.count != null ? `<span class="fc">${Number(it.count).toLocaleString()}</span>` : `<span class="fc fc-x">×</span>`}
+        </button>`).join("")}
+      </div>
+      ${more || open ? `<button type="button" class="fmore" data-param="${esc(g.param)}">${open ? "▴ Collapse" : "▾ Expand"}</button>` : ""}
+    </fieldset>`;
+  }).join("");
+  box.querySelectorAll(".fgroup").forEach((fs) => {
+    const param = fs.dataset.param;
+    fs.querySelectorAll(".fitem").forEach((btn) => {
+      btn.addEventListener("click", () => toggleFacet(param, btn.dataset.v));
+    });
+  });
+  box.querySelectorAll(".fmore").forEach((b) => {
+    b.addEventListener("click", () => { FACET_OPEN[b.dataset.param] = !FACET_OPEN[b.dataset.param]; renderFacetGroups(); });
+  });
+}
+
+function toggleFacet(param, value) {
+  const cur = state.facets[param] || [];
+  const next = cur.includes(value) ? cur.filter((v) => v !== value) : cur.concat(value);
+  if (next.length) state.facets[param] = next; else delete state.facets[param];
+  renderFacetGroups();                  // instant visual feedback before the fetch
+  newSearch();
+}
 
 /* ---------------- rendering ---------------- */
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
@@ -289,6 +383,12 @@ function renderActiveChips() {
   if (state.dateFrom) add(`from ${state.dateFrom}`, () => { state.dateFrom = ""; $("f_dateFrom").value = ""; });
   if (state.dateTo) add(`to ${state.dateTo}`, () => { state.dateTo = ""; $("f_dateTo").value = ""; });
   if (state.author) add(`by ${state.author}`, () => { state.author = ""; $("f_author").value = ""; });
+  FACET_KEYS.forEach((k) => (state.facets[k] || []).forEach((v) =>
+    add(`${FACET_LABELS[k]}: ${v}`, () => {
+      state.facets[k] = (state.facets[k] || []).filter((x) => x !== v);
+      if (!state.facets[k].length) delete state.facets[k];
+      renderFacetGroups();
+    })));
 
   const box = $("activeChips");
   box.innerHTML = chips.map((c, i) =>
@@ -429,7 +529,7 @@ function wireControls() {
     Object.assign(state, {
       q: "", exact: false, status: "all", archived: false, brand: null, audience: "",
       projecttype: null, assettype: null, doctype: "", offices: [], tags: [],
-      collection: "", rating: "", dateFrom: "", dateTo: "", author: "", page: 1,
+      collection: "", rating: "", dateFrom: "", dateTo: "", author: "", facets: {}, page: 1,
     });
     ["f_q", "f_author", "f_tag", "f_brand", "f_projecttype", "f_assettype", "f_office"].forEach((id) => { $(id).value = ""; });
     ["f_status"].forEach((id) => { $(id).value = "all"; });
@@ -437,7 +537,7 @@ function wireControls() {
     ["f_dateFrom", "f_dateTo"].forEach((id) => { $(id).value = ""; });
     $("f_exact").checked = false; $("f_archived").checked = false;
     setBrand(null); setProjecttype(null); setAssettype(null);
-    renderOfficeChips(); renderTagChips();
+    renderOfficeChips(); renderTagChips(); renderFacetGroups();
     runSearch();
   });
 
