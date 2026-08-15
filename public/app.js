@@ -369,12 +369,26 @@ function wireControls() {
 }
 
 /* ---------------- asset detail drawer ---------------- */
+const VIDEO_EXT = /^(MP4|MOV|WEBM|M4V|AVI|MKV|MPG|MPEG|WMV)$/;
 function openDrawer(a) {
   $("dwTitle").textContent = a.title || "Untitled";
   const img = $("dwImg");
-  img.style.display = "";
+  const vid = $("dwVideo");
+  const isVideo = VIDEO_EXT.test(extOf(a.title));
+  if (vid) {
+    vid.hidden = !isVideo;
+    vid.removeAttribute("src");
+    if (isVideo) {
+      vid.poster = "/api/mine/thumb/" + encodeURIComponent(a.assetid);
+      vid.src = "/api/mine/video/" + encodeURIComponent(a.assetid);
+    } else {
+      vid.removeAttribute("poster");
+      vid.load();                                        // fully release the old stream
+    }
+  }
+  img.style.display = isVideo ? "none" : "";
   img.onerror = () => { img.style.display = "none"; };   // ext placeholder shows through
-  img.src = "/api/mine/thumb/" + encodeURIComponent(a.assetid);
+  if (!isVideo) img.src = "/api/mine/thumb/" + encodeURIComponent(a.assetid);
   $("dwExt").textContent = extOf(a.title);
   $("dwDownload").href = "/api/mine/download/" + encodeURIComponent(a.assetid);
   const proj = $("dwProject");
@@ -407,6 +421,8 @@ function openDrawer(a) {
   $("drawerScrim").classList.add("open");
 }
 function closeDrawer() {
+  const vid = $("dwVideo");
+  if (vid && !vid.hidden) { try { vid.pause(); vid.removeAttribute("src"); vid.load(); } catch {} }
   $("assetDrawer").classList.remove("open");
   $("drawerScrim").classList.remove("open");
 }

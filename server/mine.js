@@ -418,6 +418,14 @@ export function resolveThumb(assetid, { auth } = {}) {
   return resolveBinary(url, { auth, follow: false });
 }
 
+/** Low-res streaming video preview (legacy V1 route, session-cookie auth).
+ *  flvopen.php 302s to a stable public CDN webm (range-capable, CORS-open) —
+ *  redirect the browser and let <video> stream natively. */
+export function resolveVideo(assetid, { auth } = {}) {
+  const url = `${config.prontoBaseUrl}/flvopen.php?assetid=${encodeURIComponent(assetid)}&s=&format=webm`;
+  return resolveBinary(url, { auth, follow: false });
+}
+
 /** Download: keep the redirect (files can be huge — don't proxy the bytes). */
 export function resolveDownload(assetid, { auth } = {}) {
   const url = `${config.prontoBaseUrl}/open.php?action=download&assetid=${encodeURIComponent(assetid)}`;

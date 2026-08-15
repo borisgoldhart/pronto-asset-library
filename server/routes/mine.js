@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { searchAssets, lookup, listCollections, popularTags, resolveThumb, resolveDownload, DAM_ID } from "../mine.js";
+import { searchAssets, lookup, listCollections, popularTags, resolveThumb, resolveVideo, resolveDownload, DAM_ID } from "../mine.js";
 
 const router = Router();
 
@@ -72,6 +72,20 @@ router.get("/thumb/:assetid", async (req, res) => {
   }
   res.setHeader("Content-Type", r.contentType);
   res.setHeader("Cache-Control", "private, max-age=604800, immutable");
+  res.end(r.body);
+});
+
+/** Video preview: 302 to the low-res streaming webm on the public CDN. */
+router.get("/video/:assetid", async (req, res) => {
+  const p = requireAuthish(req, res);
+  if (!p) return;
+  const r = await resolveVideo(req.params.assetid, { auth: p.auth });
+  if (!r.ok) return res.status(r.status || 404).end();
+  if (r.redirect) {
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    return res.redirect(302, r.redirect);
+  }
+  res.setHeader("Content-Type", r.contentType || "video/webm");
   res.end(r.body);
 });
 

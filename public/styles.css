@@ -229,6 +229,8 @@ body {
   font-size: 30px; font-weight: 800; color: #b6bdc6; letter-spacing: 2px; text-transform: uppercase;
 }
 .dw-preview img { position: relative; z-index: 1; width: 100%; height: 100%; object-fit: contain; background: #fff; display: block; }
+.dw-preview video { position: relative; z-index: 1; width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+.dw-preview video[hidden] { display: none; }
 .dw-download { display: flex; justify-content: center; width: 100%; padding: 12px; font-size: 14px; text-decoration: none; margin-bottom: 10px; }
 .dw-project { display: block; text-align: center; font-size: 13px; font-weight: 700; color: var(--pronto-blue-d); text-decoration: none; margin-bottom: 18px; }
 .dw-project:hover { text-decoration: underline; }
