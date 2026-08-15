@@ -212,10 +212,16 @@ window.addEventListener("popstate", () => {
 let FACET_SEQ = 0;
 let LAST_FACET_QS = null;
 let FACET_DATA = [];
+let FACET_FAILS = 0;            // circuit breaker: stop calling a down endpoint
 const FACET_OPEN = {};          // param -> expanded?
 const FACET_COLLAPSED_N = 5;
 
 async function runFacets() {
+  // search_counts currently rejects API-authenticated sessions upstream (it
+  // needs a full web-login session; bearer requests 500). Until the platform
+  // fix ships, don't keep hammering it: two consecutive failures turn the
+  // facet panel off for this page load.
+  if (FACET_FAILS >= 2) return;
   const p = buildQuery();
   p.delete("pos"); p.delete("rows"); p.delete("sort");   // page/order don't change counts
   const qs = p.toString();
@@ -226,10 +232,11 @@ async function runFacets() {
   try {
     const r = await api(`/api/mine/facets?${qs}&limit=20`);
     if (seq !== FACET_SEQ) return;
+    FACET_FAILS = 0;
     FACET_DATA = r.groups || [];
     renderFacetGroups();
   } catch (e) {
-    if (seq === FACET_SEQ) LAST_FACET_QS = null;         // allow retry on next search
+    if (seq === FACET_SEQ) { LAST_FACET_QS = null; FACET_FAILS++; }
   } finally {
     if (seq === FACET_SEQ) $("facetGroups")?.classList.remove("fload");
   }
