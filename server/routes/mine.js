@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { searchAssets, facetCounts, lookup, listCollections, popularTags, resolveThumb, resolveVideo, resolveDownload, DAM_ID } from "../mine.js";
+import { config } from "../config.js";
+import { searchAssets, facetCounts, buildSearchParams, lookup, listCollections, popularTags, resolveThumb, resolveVideo, resolveDownload, DAM_ID } from "../mine.js";
 
 const router = Router();
 
@@ -31,6 +32,48 @@ router.get("/facets", async (req, res) => {
   const r = await facetCounts(req.query, { auth: p.auth, limit: req.query.limit });
   if (!r.ok) return res.status(r.status || 502).json({ ok: false, error: r.error, authRequired: r.authRequired });
   res.json({ ok: true, count: r.count, groups: r.groups });
+});
+
+/** TEMP diagnostic: which upstream auth/param strategy does search_counts accept?
+ *  Remove once the winning strategy is baked into facetCounts. */
+router.get("/facets-debug", async (req, res) => {
+  const p = requireAuthish(req, res);
+  if (!p) return;
+  const auth = p.auth || {};
+  const params = buildSearchParams(req.query);
+  params.delete("pos"); params.delete("rows"); params.delete("sort");
+  params.set("limit", "3"); params.set("order", "desc");
+  const base = `${config.prontoBaseUrl}/v2/ajax/reports/search_counts?`;
+  const out = [];
+  const attempt = async (label, url, headers) => {
+    try {
+      const r = await fetch(url, { headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest", ...headers } });
+      const t = await r.text();
+      let j = null; try { j = JSON.parse(t); } catch {}
+      out.push({ label, status: r.status, facets: !!(j && j.facets),
+        n: j && j.response ? j.response.numFound : null,
+        err: (j && (j.error || j.message)) || null, html: !j ? t.slice(0, 60) : null });
+      return !!(j && j.facets);
+    } catch (e) { out.push({ label, err: String(e) }); return false; }
+  };
+  const cookieH = auth.cookie ? { Cookie: auth.cookie } : null;
+  const bearerH = auth.token ? { Authorization: `Bearer ${auth.token}` } : null;
+  if (cookieH) await attempt("cookie", base + params.toString(), cookieH);
+  if (cookieH) {
+    const p2 = new URLSearchParams(params); p2.set("dam_id", String(DAM_ID));
+    await attempt("cookie+dam_id", base + p2.toString(), cookieH);
+  }
+  if (bearerH) await attempt("bearer", base + params.toString(), bearerH);
+  if (cookieH && bearerH) await attempt("cookie+bearer", base + params.toString(), { ...cookieH, ...bearerH });
+  if (cookieH) {
+    try {
+      const w = await fetch(`${config.prontoBaseUrl}/mine.php?dam_id=${DAM_ID}`, { headers: cookieH });
+      await w.text();
+      out.push({ label: "warm-mine.php", status: w.status });
+    } catch (e) { out.push({ label: "warm-mine.php", err: String(e) }); }
+    await attempt("cookie-after-warm", base + params.toString(), cookieH);
+  }
+  res.json({ ok: true, hasCookie: !!cookieH, hasToken: !!bearerH, debug: out });
 });
 
 /** SAYT lookups: /api/mine/lookup/brands?keyword=ha  (brands | project-types |
